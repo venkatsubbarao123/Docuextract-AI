@@ -85,31 +85,33 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
 
     # Tax breakdown
     taxes_breakdown = []
+    cgst_val = None
+    sgst_val = None
     cgst_match = re.search(r'CGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
     sgst_match = re.search(r'SGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
     igst_match = re.search(r'IGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
     
     total_tax = 0.0
     if cgst_match:
-        cgst_amt = float(cgst_match.group(1).replace(",", ""))
-        taxes_breakdown.append({"tax_type": "CGST", "amount": cgst_amt})
-        total_tax += cgst_amt
+        cgst_val = float(cgst_match.group(1).replace(",", ""))
+        taxes_breakdown.append({"tax_type": "CGST", "amount": cgst_val})
+        total_tax += cgst_val
     if sgst_match:
-        sgst_amt = float(sgst_match.group(1).replace(",", ""))
-        taxes_breakdown.append({"tax_type": "SGST", "amount": sgst_amt})
-        total_tax += sgst_amt
+        sgst_val = float(sgst_match.group(1).replace(",", ""))
+        taxes_breakdown.append({"tax_type": "SGST", "amount": sgst_val})
+        total_tax += sgst_val
     if igst_match:
         igst_amt = float(igst_match.group(1).replace(",", ""))
         taxes_breakdown.append({"tax_type": "IGST", "amount": igst_amt})
         total_tax += igst_amt
 
     if total_tax == 0.0:
-        tax_match = re.search(r'(?:Tax|VAT|GST)\s*(?:Amount)?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+        tax_match = re.search(r'(?:Total\s*Tax|Tax|VAT|GST)\s*(?:Amount)?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
         if tax_match:
             total_tax = float(tax_match.group(1).replace(",", ""))
 
-    # Check explicitly for Total / Grand Total line
-    tot_match = re.search(r'^(?:Grand\s*Total|Total)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE | re.MULTILINE)
+    # Check explicitly for Grand Total / Total line (anchored per line to avoid Subtotal / Total Tax)
+    tot_match = re.search(r'^\s*(?:Grand\s*Total|Total\s*Amount|Final\s*Total|Total\s*Due|Total)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE | re.MULTILINE)
     if tot_match:
         total = float(tot_match.group(1).replace(",", ""))
     elif subtotal > 0:
@@ -153,6 +155,8 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
         "line_items": line_items,
         "subtotal": round(subtotal, 2),
         "tax": round(total_tax, 2),
+        "cgst": round(cgst_val, 2) if cgst_val is not None else None,
+        "sgst": round(sgst_val, 2) if sgst_val is not None else None,
         "taxes_breakdown": taxes_breakdown if taxes_breakdown else None,
         "total": round(total, 2)
     }

@@ -65,7 +65,8 @@ def preload_data_if_empty():
             classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
-            status="Verified"
+            status="Verified",
+            engine_used="Mock Mode"
         ),
         ExtractionResponse(
             id="doc-002",
@@ -89,7 +90,8 @@ def preload_data_if_empty():
             classification_confidence=0.98,
             review_required=False,
             review_reasons=[],
-            status="Verified"
+            status="Verified",
+            engine_used="Mock Mode"
         ),
         ExtractionResponse(
             id="doc-003",
@@ -117,7 +119,8 @@ def preload_data_if_empty():
             classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
-            status="Verified"
+            status="Verified",
+            engine_used="Mock Mode"
         ),
         ExtractionResponse(
             id="doc-004",
@@ -145,7 +148,8 @@ def preload_data_if_empty():
                 "Extraction confidence below threshold (70%)",
                 "Unreadable line items or missing total values (tax & total read as 0.0)"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         ),
         ExtractionResponse(
             id="doc-005",
@@ -172,7 +176,8 @@ def preload_data_if_empty():
                 "Missing standard fields: Invoice Due Date is not specified",
                 "Confidence score (68%) is below threshold"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         ),
         ExtractionResponse(
             id="doc-006",
@@ -186,7 +191,8 @@ def preload_data_if_empty():
                 "Document format could not be classified",
                 "No valid data matching standard schemas found"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     ]
     for s in samples:

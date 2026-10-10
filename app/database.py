@@ -21,10 +21,16 @@ def init_db():
                 review_required INTEGER NOT NULL,
                 review_reasons TEXT NOT NULL,
                 status TEXT NOT NULL,
+                engine_used TEXT DEFAULT 'Local Parser',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Migration: ensure engine_used column exists if table was created previously
+        cursor.execute("PRAGMA table_info(documents)")
+        cols = [col[1] for col in cursor.fetchall()]
+        if "engine_used" not in cols:
+            cursor.execute("ALTER TABLE documents ADD COLUMN engine_used TEXT DEFAULT 'Local Parser'")
         conn.commit()
 
 def save_document(doc: ExtractionResponse) -> None:
@@ -33,8 +39,8 @@ def save_document(doc: ExtractionResponse) -> None:
         cursor = conn.cursor()
         cursor.execute("""
             INSERT OR REPLACE INTO documents 
-            (id, filename, doc_type, extracted_data, confidence, classification_confidence, review_required, review_reasons, status, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            (id, filename, doc_type, extracted_data, confidence, classification_confidence, review_required, review_reasons, status, engine_used, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (
             doc.id,
             doc.filename,
@@ -44,7 +50,8 @@ def save_document(doc: ExtractionResponse) -> None:
             getattr(doc, "classification_confidence", doc.confidence),
             1 if doc.review_required else 0,
             json.dumps(doc.review_reasons),
-            doc.status
+            doc.status,
+            getattr(doc, "engine_used", "Local Parser")
         ))
         conn.commit()
 
@@ -57,6 +64,7 @@ def get_document_by_id(doc_id: str) -> Optional[ExtractionResponse]:
         row = cursor.fetchone()
         if not row:
             return None
+        row_keys = row.keys()
         return ExtractionResponse(
             id=row["id"],
             filename=row["filename"],
@@ -66,7 +74,8 @@ def get_document_by_id(doc_id: str) -> Optional[ExtractionResponse]:
             classification_confidence=row["classification_confidence"],
             review_required=bool(row["review_required"]),
             review_reasons=json.loads(row["review_reasons"]),
-            status=row["status"]
+            status=row["status"],
+            engine_used=row["engine_used"] if "engine_used" in row_keys and row["engine_used"] else "Local Parser"
         )
 
 def get_all_documents(
@@ -85,6 +94,7 @@ def get_all_documents(
         
         docs = []
         for row in rows:
+            row_keys = row.keys()
             doc = ExtractionResponse(
                 id=row["id"],
                 filename=row["filename"],
@@ -94,7 +104,8 @@ def get_all_documents(
                 classification_confidence=row["classification_confidence"],
                 review_required=bool(row["review_required"]),
                 review_reasons=json.loads(row["review_reasons"]),
-                status=row["status"]
+                status=row["status"],
+                engine_used=row["engine_used"] if "engine_used" in row_keys and row["engine_used"] else "Local Parser"
             )
             docs.append(doc)
 

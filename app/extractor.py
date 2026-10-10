@@ -171,7 +171,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     elif "delivery_note_standard" in fn_lower:
         return ExtractionResponse(
@@ -183,7 +184,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             classification_confidence=0.98,
             review_required=False,
             review_reasons=[],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     elif "contract_standard" in fn_lower:
         return ExtractionResponse(
@@ -195,7 +197,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     elif "blurry" in fn_lower or "low_quality" in fn_lower:
         return ExtractionResponse(
@@ -211,7 +214,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
                 "Extraction confidence below threshold (70%)",
                 "Unreadable line items or missing total values (tax & total read as 0.0)"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     elif "unusual" in fn_lower or "receipt" in fn_lower:
         return ExtractionResponse(
@@ -227,7 +231,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
                 "Missing standard fields: Invoice Due Date is not specified",
                 "Confidence score (68%) is below threshold"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
     else:
         return ExtractionResponse(
@@ -242,7 +247,8 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
                 "Document format could not be classified",
                 "No valid data matching standard schemas found"
             ],
-            status="Pending"
+            status="Pending",
+            engine_used="Mock Mode"
         )
 
 # ==========================================
@@ -435,6 +441,8 @@ def _execute_gemini_extraction(
             '  "line_items": [{"description": "string", "quantity": number, "price": number, "amount": number}],\n'
             '  "subtotal": number,\n'
             '  "tax": number,\n'
+            '  "cgst": number or null,\n'
+            '  "sgst": number or null,\n'
             '  "total": number\n'
             "}\n"
             "DO NOT substitute default or demo data. Extract the exact values present in the document. "
@@ -511,7 +519,8 @@ def _execute_gemini_extraction(
         classification_confidence=round(class_conf, 2),
         review_required=review_required,
         review_reasons=review_reasons,
-        status="Pending"
+        status="Pending",
+        engine_used="Gemini AI"
     )
 
 def _execute_deterministic_fallback(
@@ -560,7 +569,8 @@ def _execute_deterministic_fallback(
         classification_confidence=round(class_conf, 2),
         review_required=review_required,
         review_reasons=review_reasons,
-        status="Pending"
+        status="Pending",
+        engine_used="Local Parser"
     )
 
 def _evaluate_extraction_confidence(doc_type: str, data: Dict[str, Any], filename: str) -> Tuple[float, bool, List[str]]:
@@ -578,11 +588,33 @@ def _evaluate_extraction_confidence(doc_type: str, data: Dict[str, Any], filenam
         if not data.get("line_items"):
             review_reasons.append("No line items could be extracted")
             confidence -= 0.20
+        else:
+            # Check line item quantity * price == amount
+            for idx, item in enumerate(data.get("line_items", [])):
+                q = float(item.get("quantity") or 0.0)
+                p = float(item.get("price") or 0.0)
+                amt = float(item.get("amount") or 0.0)
+                if q > 0 and p > 0 and amt > 0:
+                    expected_amt = round(q * p, 2)
+                    if abs(amt - expected_amt) > 0.05:
+                        review_reasons.append(f"Line item {idx + 1} discrepancy: {q} x {p} = {expected_amt}, but extracted amount is {amt}")
+                        confidence -= 0.10
+                        break
             
         subtotal = float(data.get("subtotal") or 0.0)
         tax = float(data.get("tax") or 0.0)
         total = float(data.get("total") or 0.0)
+        cgst = data.get("cgst")
+        sgst = data.get("sgst")
         
+        # Check CGST + SGST == total tax if both present
+        if cgst is not None and sgst is not None and tax > 0:
+            cgst_f = float(cgst)
+            sgst_f = float(sgst)
+            if abs((cgst_f + sgst_f) - tax) > 0.05:
+                review_reasons.append(f"Tax breakdown discrepancy: CGST ({cgst_f}) + SGST ({sgst_f}) = {round(cgst_f + sgst_f, 2)} does not equal Total Tax ({tax})")
+                confidence -= 0.10
+
         if total == 0.0 and subtotal == 0.0:
             review_reasons.append("Financial amounts could not be extracted (Total is 0.0)")
             confidence -= 0.25

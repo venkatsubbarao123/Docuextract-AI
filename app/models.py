@@ -25,6 +25,8 @@ class InvoiceSchema(BaseModel):
     line_items: List[InvoiceLineItem] = Field(default_factory=list, description="List of individual items billed")
     subtotal: float = Field(default=0.0, description="Subtotal amount before tax")
     tax: float = Field(default=0.0, description="Total tax amount billed")
+    cgst: Optional[float] = Field(default=None, description="Central GST amount if applicable")
+    sgst: Optional[float] = Field(default=None, description="State GST amount if applicable")
     taxes_breakdown: Optional[List[InvoiceTaxDetail]] = Field(default=None, description="Optional breakdown of tax components like CGST/SGST")
     total: float = Field(default=0.0, description="Grand total amount due")
 
@@ -71,3 +73,4 @@ class ExtractionResponse(BaseModel):
     review_required: bool = Field(description="Whether a human operator needs to review the extraction")
     review_reasons: List[str] = Field(default_factory=list, description="Reasons why review is flagged")
     status: str = Field(default="Pending", description="Processing status: 'Pending' or 'Verified'")
+    engine_used: str = Field(default="Local Parser", description="The engine that executed the extraction ('Gemini AI', 'Local Parser', or 'Mock Mode')")

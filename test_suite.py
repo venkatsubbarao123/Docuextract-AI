@@ -199,6 +199,75 @@ class TestDocuExtractComprehensive(unittest.TestCase):
         self.assertEqual(data["status"], "healthy")
         self.assertEqual(data["database"], "sqlite_ready")
 
+    def test_22_invoice_nsm_26_2087_inr_tax_breakdown(self):
+        """Test the NSM-26-2087 invoice: currency INR, CGST 385.20, SGST 385.20, total tax 770.40, total 5,540.40."""
+        nsm_content = b"""
+INVOICE
+Invoice No: NSM-26-2087
+Date: 12-Aug-2026
+Vendor: NSM Industrial Solutions Ltd.
+Currency: INR
+
+Line Items:
+1. Precision Stainless Bearing Unit | Qty: 4 | Price: 1042.50 | Amount: 4170.00
+2. High-temp Flange Gasket Set | Qty: 2 | Price: 300.00 | Amount: 600.00
+
+Subtotal: 4770.00
+CGST (6%): 385.20
+SGST (6%): 385.20
+Total Tax: 770.40
+Grand Total: 5,540.40
+"""
+        res = run_document_extraction(
+            api_key=None,
+            filename="NSM_Invoice_2087.pdf",
+            mime_type="application/pdf",
+            file_bytes=nsm_content
+        )
+        self.assertEqual(res.doc_type, "Invoice")
+        self.assertEqual(res.engine_used, "Local Parser")
+        data = res.extracted_data
+        
+        self.assertEqual(data["invoice_number"], "NSM-26-2087")
+        self.assertEqual(data["currency"], "INR")
+        self.assertEqual(data["cgst"], 385.20)
+        self.assertEqual(data["sgst"], 385.20)
+        self.assertEqual(data["tax"], 770.40)
+        self.assertEqual(round(data["cgst"] + data["sgst"], 2), data["tax"])
+        self.assertEqual(data["subtotal"], 4770.00)
+        self.assertEqual(data["total"], 5540.40)
+        self.assertEqual(len(data["line_items"]), 2)
+
+    def test_23_invoice_usd_dynamic_currency(self):
+        """Test a USD invoice to confirm dynamic currency extraction and line items."""
+        usd_content = b"""
+INVOICE
+Invoice Number: US-9941
+Invoice Date: 2026-09-01
+Vendor: Apex US Technologies
+Currency: USD
+
+Line Items:
+1. Cloud Server Hosting (Standard) | Qty: 1 | Price: 250.00 | Amount: 250.00
+
+Subtotal: $250.00
+Tax: $25.00
+Total: $275.00
+"""
+        res = run_document_extraction(
+            api_key=None,
+            filename="Apex_Hosting_Bill.pdf",
+            mime_type="application/pdf",
+            file_bytes=usd_content
+        )
+        self.assertEqual(res.doc_type, "Invoice")
+        self.assertEqual(res.engine_used, "Local Parser")
+        data = res.extracted_data
+        self.assertEqual(data["currency"], "USD")
+        self.assertEqual(data["total"], 275.00)
+        self.assertIsNone(data.get("cgst"))
+        self.assertIsNone(data.get("sgst"))
+
 
 if __name__ == "__main__":
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDocuExtractComprehensive)

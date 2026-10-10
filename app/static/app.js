@@ -247,6 +247,14 @@ function renderQueue() {
     // Short date formatting
     const confidencePct = Math.round(doc.confidence * 100);
 
+    const engineUsed = doc.engine_used || "Local Parser";
+    let engineBadgeColor = "text-amber-400 bg-amber-500/10 border-amber-500/20";
+    if (engineUsed === "Gemini AI") {
+      engineBadgeColor = "text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+    } else if (engineUsed === "Mock Mode") {
+      engineBadgeColor = "text-slate-400 bg-slate-800 border-slate-700";
+    }
+
     card.innerHTML = `
       <div class="flex items-start justify-between space-x-2">
         <div class="flex items-center space-x-2 min-w-0">
@@ -259,7 +267,10 @@ function renderQueue() {
       </div>
       
       <div class="flex items-center justify-between mt-3 text-[10px]">
-        <span class="px-2 py-0.5 rounded-md font-semibold text-[9px] uppercase ${typeBadge}">${doc.doc_type}</span>
+        <div class="flex items-center space-x-1.5">
+          <span class="px-2 py-0.5 rounded-md font-semibold text-[9px] uppercase ${typeBadge}">${doc.doc_type}</span>
+          <span class="px-1.5 py-0.2 rounded text-[8px] font-mono border ${engineBadgeColor}">${engineUsed}</span>
+        </div>
         <span class="text-slate-500 font-mono">${doc.status}</span>
       </div>
     `;
@@ -306,6 +317,20 @@ function selectDocument(id) {
   // Hide empty state
   document.getElementById("empty-workspace-state").classList.add("opacity-0", "pointer-events-none");
   setTimeout(() => document.getElementById("empty-workspace-state").classList.add("hidden"), 300);
+
+  // Engine Used Badge
+  const engineBadge = document.getElementById("badge-engine-used");
+  if (engineBadge) {
+    const eng = doc.engine_used || "Local Parser";
+    engineBadge.innerText = `Engine: ${eng}`;
+    if (eng === "Gemini AI") {
+      engineBadge.className = "text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/25";
+    } else if (eng === "Mock Mode") {
+      engineBadge.className = "text-[11px] font-semibold text-slate-400 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-700";
+    } else {
+      engineBadge.className = "text-[11px] font-semibold text-amber-400 bg-amber-500/10 px-2.5 py-1 rounded-lg border border-amber-500/25";
+    }
+  }
 
   // Classify Badge Type styling
   const classificationBadge = document.getElementById("badge-classification");
@@ -418,10 +443,16 @@ function renderDocumentVisual(doc) {
           `).join('')}
         </div>
       </div>
-      <div class="border-t border-slate-800 pt-2 mt-auto">
-        <div class="flex justify-between items-center text-xs">
-          <span class="text-slate-500 font-medium">TOTAL AMOUNT DUE</span>
-          <span class="text-base font-bold text-emerald-400 font-mono">${currSym}${(data.total || 0).toFixed(2)}</span>
+      <div class="border-t border-slate-800 pt-2 mt-auto text-[10px]">
+        ${(data.cgst !== undefined && data.cgst !== null) ? `
+          <div class="flex justify-between items-center text-slate-400 mb-0.5">
+            <span>CGST / SGST</span>
+            <span class="font-mono">${currSym}${(data.cgst || 0).toFixed(2)} + ${currSym}${(data.sgst || 0).toFixed(2)}</span>
+          </div>
+        ` : ''}
+        <div class="flex justify-between items-center text-xs pt-1 border-t border-slate-800/60">
+          <span class="text-slate-400 font-medium">TOTAL DUE</span>
+          <span class="text-sm font-bold text-emerald-400 font-mono">${currSym}${(data.total || 0).toFixed(2)}</span>
         </div>
       </div>
     `;
@@ -631,20 +662,28 @@ function renderExtractionForm(doc) {
       </div>
 
       <!-- Financial Totals -->
-      <div class="border-t border-slate-800 pt-4 grid grid-cols-3 gap-4">
+      <div class="border-t border-slate-800 pt-4 grid grid-cols-2 md:grid-cols-3 gap-4">
         <div>
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Subtotal (${currSym})</label>
           <input type="number" step="0.01" name="subtotal" value="${data.subtotal || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Tax (${currSym})</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Total Tax (${currSym})</label>
           <input type="number" step="0.01" name="tax" value="${data.tax || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Total (${currSym})</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Grand Total (${currSym})</label>
           <input type="number" step="0.01" name="total" value="${data.total || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-emerald-400 font-mono font-bold focus:outline-none transition">
         </div>
-        <div class="col-span-2">
+        <div>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">CGST (${currSym})</label>
+          <input type="number" step="0.01" name="cgst" value="${data.cgst !== undefined && data.cgst !== null ? data.cgst : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">SGST (${currSym})</label>
+          <input type="number" step="0.01" name="sgst" value="${data.sgst !== undefined && data.sgst !== null ? data.sgst : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
+        </div>
+        <div>
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Payment Due Date</label>
           <input type="text" name="due_date" value="${data.due_date || ''}" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none transition">
         </div>
@@ -842,7 +881,7 @@ window.addInvoiceItemRow = function() {
       <input type="number" step="0.01" value="0.00" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
     </td>
     <td class="py-2 pl-2 text-right text-emerald-400 font-mono font-bold item-amount-val text-xs">
-      $0.00
+      ${(document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "INR" ? "₹" : (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "EUR" ? "€" : (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "GBP" ? "£" : "$"}0.00
     </td>
     <td class="py-2 text-center">
       <button type="button" onclick="removeInvoiceItemRow(this)" class="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-500/10 rounded transition">
@@ -864,7 +903,21 @@ window.calculateItemRowAmount = function(input) {
   const qty = parseFloat(row.querySelector(".item-qty").value) || 0;
   const price = parseFloat(row.querySelector(".item-price").value) || 0;
   const amount = qty * price;
-  row.querySelector(".item-amount-val").innerText = `$${amount.toFixed(2)}`;
+  const curr = (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "");
+  const sym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
+  row.querySelector(".item-amount-val").innerText = `${sym}${amount.toFixed(2)}`;
+  recalculateInvoiceSummary();
+};
+
+window.recalculateTaxesFromBreakdown = function() {
+  const cgstInput = document.getElementsByName("cgst")[0];
+  const sgstInput = document.getElementsByName("sgst")[0];
+  const taxInput = document.getElementsByName("tax")[0];
+  if (cgstInput && sgstInput && (cgstInput.value !== "" || sgstInput.value !== "")) {
+    const cgst = parseFloat(cgstInput.value) || 0;
+    const sgst = parseFloat(sgstInput.value) || 0;
+    if (taxInput) taxInput.value = (cgst + sgst).toFixed(2);
+  }
   recalculateInvoiceSummary();
 };
 
@@ -1080,9 +1133,13 @@ async function submitApproval() {
     verifiedPayload.invoice_date = document.getElementsByName("invoice_date")[0].value;
     verifiedPayload.vendor_name = document.getElementsByName("vendor_name")[0].value;
     const currInput = document.getElementsByName("currency")[0];
+    const cgstInput = document.getElementsByName("cgst")[0];
+    const sgstInput = document.getElementsByName("sgst")[0];
     verifiedPayload.currency = currInput ? currInput.value : (doc.extracted_data.currency || "USD");
     verifiedPayload.subtotal = parseFloat(subtotalInput ? subtotalInput.value : 0) || 0;
     verifiedPayload.tax = parseFloat(taxInput ? taxInput.value : 0) || 0;
+    verifiedPayload.cgst = (cgstInput && cgstInput.value !== "") ? parseFloat(cgstInput.value) : null;
+    verifiedPayload.sgst = (sgstInput && sgstInput.value !== "") ? parseFloat(sgstInput.value) : null;
     verifiedPayload.total = parseFloat(totalInput ? totalInput.value : 0) || 0;
     verifiedPayload.due_date = document.getElementsByName("due_date")[0].value;
     
