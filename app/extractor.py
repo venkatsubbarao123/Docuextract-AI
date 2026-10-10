@@ -6,17 +6,25 @@ import urllib.request
 import urllib.error
 import random
 import copy
+import time
 from typing import Dict, Any, Tuple, Optional, List
 from .models import InvoiceSchema, DeliveryNoteSchema, ContractSchema, ExtractionResponse
+from .parser import (
+    extract_text_from_file,
+    parse_deterministic_invoice,
+    parse_deterministic_delivery_note,
+    parse_deterministic_contract
+)
 
 # ==========================================
-# MOCK EXTRACTION DATA TEMPLATES
+# MOCK / SAMPLE FIXTURES (For UI Showcase only)
 # ==========================================
 
 MOCK_INVOICE_STANDARD = {
     "invoice_number": "INV-2026-9084",
     "invoice_date": "2026-08-15",
     "vendor_name": "Apex Industrial Supplies Ltd.",
+    "currency": "USD",
     "line_items": [
         {"description": "Heavy-duty Hydraulic Cylinders (Model H-400)", "quantity": 2.0, "price": 450.00, "amount": 900.00},
         {"description": "Industrial Sealant Cartridges", "quantity": 10.0, "price": 18.50, "amount": 185.00},
@@ -53,6 +61,7 @@ MOCK_CONTRACT_STANDARD = {
     "effective_date": "2026-08-01",
     "expiration_date": "2027-07-31",
     "contract_amount": 150000.00,
+    "currency": "USD",
     "contract_type": "Master Services Agreement (MSA)",
     "key_clauses": [
         "Section 4.1: Net 30 payment terms on all verified invoices.",
@@ -61,26 +70,26 @@ MOCK_CONTRACT_STANDARD = {
     ]
 }
 
-# Low-quality blurry document (Incomplete, smudged)
 MOCK_INVOICE_BLURRY = {
     "invoice_number": "INV-2026-7[BLURRY]",
     "invoice_date": "2026-08-10",
     "vendor_name": "Titan Steel Casting Inc.",
+    "currency": "USD",
     "line_items": [
         {"description": "Reinforced Steel Rebars (Grade 60, 20ft)", "quantity": 150.0, "price": 12.00, "amount": 1800.00},
         {"description": "[UNREADABLE LINE ITEM]", "quantity": 1.0, "price": 0.0, "amount": 0.0}
     ],
     "subtotal": 1800.00,
-    "tax": 0.0, # Unreadable smudged total
-    "total": 0.0, # Tax and total are smudged out in the scanned image
+    "tax": 0.0,
+    "total": 0.0,
     "due_date": "2026-09-10"
 }
 
-# Unusual or unsupported template
 MOCK_UNUSUAL_RECEIPT = {
     "invoice_number": "REC-994A",
     "invoice_date": "2026-08-20",
     "vendor_name": "Airport Cafe & Catering (Handwritten Receipt)",
+    "currency": "USD",
     "line_items": [
         {"description": "Catering services - team meeting lunch", "quantity": 1.0, "price": 340.50, "amount": 340.50}
     ],
@@ -89,7 +98,6 @@ MOCK_UNUSUAL_RECEIPT = {
     "total": 357.53,
     "due_date": None
 }
-
 
 def classify_by_filename(filename: str) -> str:
     """Helper to classify mock documents by filename keywords."""
@@ -103,9 +111,53 @@ def classify_by_filename(filename: str) -> str:
     else:
         return "Unknown"
 
+def classify_by_content(text: str, filename: str = "") -> Tuple[str, float]:
+    """Classifies a document primarily using its extracted text content, with filename as secondary signal."""
+    t_lower = text.lower()
+    
+    inv_score = 0
+    dn_score = 0
+    cnt_score = 0
+
+    # Content evidence
+    if "invoice" in t_lower: inv_score += 4
+    if "subtotal" in t_lower or "amount due" in t_lower or "grand total" in t_lower: inv_score += 3
+    if "tax" in t_lower or "gst" in t_lower or "cgst" in t_lower or "sgst" in t_lower or "vat" in t_lower: inv_score += 3
+    if "bill to" in t_lower or "due date" in t_lower: inv_score += 2
+
+    if "delivery note" in t_lower or "delivery order" in t_lower or "despatch" in t_lower: dn_score += 5
+    if "goods received" in t_lower or "received by" in t_lower: dn_score += 3
+    if "carrier" in t_lower or "shipped via" in t_lower: dn_score += 2
+    if "packages" in t_lower or "cartons" in t_lower: dn_score += 2
+
+    if "agreement" in t_lower or "contract" in t_lower: cnt_score += 4
+    if "parties" in t_lower or "between" in t_lower and "hereinafter" in t_lower: cnt_score += 4
+    if "effective date" in t_lower or "termination" in t_lower or "governing law" in t_lower: cnt_score += 3
+    if "clause" in t_lower or "indemnity" in t_lower or "witnesseth" in t_lower: cnt_score += 3
+
+    # Filename supporting signal (weight: 1)
+    fn_lower = filename.lower()
+    if "invoice" in fn_lower or "bill" in fn_lower: inv_score += 1
+    if "delivery" in fn_lower or "note" in fn_lower or "dn" in fn_lower: dn_score += 1
+    if "contract" in fn_lower or "agreement" in fn_lower: cnt_score += 1
+
+    max_score = max(inv_score, dn_score, cnt_score)
+    if max_score < 3:
+        # Fall back to filename if content gave no signal
+        fn_type = classify_by_filename(filename)
+        return fn_type, (0.75 if fn_type != "Unknown" else 0.20)
+
+    if inv_score == max_score:
+        return "Invoice", min(0.98, 0.70 + (inv_score * 0.03))
+    elif dn_score == max_score:
+        return "Delivery Note", min(0.98, 0.70 + (dn_score * 0.03))
+    elif cnt_score == max_score:
+        return "Contract", min(0.98, 0.70 + (cnt_score * 0.03))
+    
+    return "Unknown", 0.20
 
 def get_mock_extraction(filename: str) -> ExtractionResponse:
-    """Simulates document extraction for the mock engine."""
+    """Simulates document extraction for the canned sample gallery."""
     doc_id = str(uuid.uuid4())[:8]
     fn_lower = filename.lower()
 
@@ -116,6 +168,7 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             doc_type="Invoice",
             extracted_data=copy.deepcopy(MOCK_INVOICE_STANDARD),
             confidence=0.98,
+            classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
             status="Pending"
@@ -127,6 +180,7 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             doc_type="Delivery Note",
             extracted_data=copy.deepcopy(MOCK_DELIVERY_NOTE_STANDARD),
             confidence=0.96,
+            classification_confidence=0.98,
             review_required=False,
             review_reasons=[],
             status="Pending"
@@ -138,6 +192,7 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             doc_type="Contract",
             extracted_data=copy.deepcopy(MOCK_CONTRACT_STANDARD),
             confidence=0.97,
+            classification_confidence=0.99,
             review_required=False,
             review_reasons=[],
             status="Pending"
@@ -149,6 +204,7 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             doc_type="Invoice",
             extracted_data=copy.deepcopy(MOCK_INVOICE_BLURRY),
             confidence=0.52,
+            classification_confidence=0.75,
             review_required=True,
             review_reasons=[
                 "Blurry or smudged scan detected",
@@ -164,6 +220,7 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             doc_type="Invoice",
             extracted_data=copy.deepcopy(MOCK_UNUSUAL_RECEIPT),
             confidence=0.68,
+            classification_confidence=0.82,
             review_required=True,
             review_reasons=[
                 "Unusual handwritten receipt format detected",
@@ -172,13 +229,14 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             ],
             status="Pending"
         )
-    elif "unknown" in fn_lower or "unsupported" in fn_lower:
+    else:
         return ExtractionResponse(
             id=doc_id,
             filename=filename,
             doc_type="Unknown",
             extracted_data={},
             confidence=0.15,
+            classification_confidence=0.15,
             review_required=True,
             review_reasons=[
                 "Document format could not be classified",
@@ -186,92 +244,129 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
             ],
             status="Pending"
         )
-    else:
-        # Fallback for custom user uploads when mock engine is active
-        doc_type = classify_by_filename(filename)
-        
-        if doc_type == "Invoice":
-            data = copy.deepcopy(MOCK_INVOICE_STANDARD)
-            data["invoice_number"] = f"INV-2026-{random.randint(1000, 9999)}"
-            data["total"] = round(1000 + random.random() * 500, 2)
-            confidence = 0.85
-            review_required = False
-            reasons = []
-        elif doc_type == "Delivery Note":
-            data = copy.deepcopy(MOCK_DELIVERY_NOTE_STANDARD)
-            data["delivery_note_id"] = f"DN-{random.randint(10000, 99999)}"
-            confidence = 0.88
-            review_required = False
-            reasons = []
-        elif doc_type == "Contract":
-            data = copy.deepcopy(MOCK_CONTRACT_STANDARD)
-            data["contract_id"] = f"AGR-2026-{random.randint(100, 999)}"
-            confidence = 0.90
-            review_required = False
-            reasons = []
-        else:
-            doc_type = "Unknown"
-            data = {}
-            confidence = 0.22
-            review_required = True
-            reasons = ["Failed to classify document type from custom file name"]
-
-        return ExtractionResponse(
-            id=doc_id,
-            filename=filename,
-            doc_type=doc_type,
-            extracted_data=data,
-            confidence=confidence,
-            review_required=review_required,
-            review_reasons=reasons,
-            status="Pending"
-        )
-
 
 # ==========================================
-# GEMINI LIVE API ENGINE
+# GEMINI LIVE API ENGINE WITH RETRIES & BACKOFF
 # ==========================================
 
 def call_gemini_api(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Helper to perform HTTP POST to Google Gemini API with fallback cascade."""
+    """Helper to perform HTTP POST to Google Gemini API with error distinction, backoff, and model fallback."""
     models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]
     last_err = None
     headers = {"Content-Type": "application/json"}
     
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-            method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=20) as response:
-                res_body = response.read().decode("utf-8")
-                return json.loads(res_body)
-        except urllib.error.HTTPError as e:
-            err_msg = e.read().decode("utf-8", errors="ignore")
+        
+        # Retry loop for transient issues (503, 429)
+        max_retries = 2
+        for attempt in range(max_retries):
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(payload).encode("utf-8"),
+                headers=headers,
+                method="POST"
+            )
             try:
-                err_json = json.loads(err_msg)
-                message = err_json.get("error", {}).get("message", err_msg)
-            except Exception:
-                message = err_msg
-            last_err = f"Gemini API Error (HTTP {e.code}): {message}"
-        except Exception as e:
-            last_err = f"Failed to connect to Gemini API: {str(e)}"
+                with urllib.request.urlopen(req, timeout=20) as response:
+                    res_body = response.read().decode("utf-8")
+                    return json.loads(res_body)
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode("utf-8", errors="ignore")
+                try:
+                    err_json = json.loads(err_msg)
+                    message = err_json.get("error", {}).get("message", err_msg)
+                except Exception:
+                    message = err_msg
+                    
+                # Do not retry permanent client errors (400, 401, 403, 404)
+                if e.code in (400, 401, 403, 404):
+                    last_err = f"Gemini API Error (HTTP {e.code}): {message}"
+                    break
+                elif e.code == 429:
+                    last_err = "Gemini API Quota/Rate Limit Exceeded (HTTP 429). Please check your quota or wait."
+                    time.sleep(1.0 + random.random() * 0.5)
+                elif e.code == 503:
+                    last_err = f"Gemini API Service Temporarily Unavailable (HTTP 503): {message}"
+                    time.sleep(1.0 + random.random() * 0.5)
+                else:
+                    last_err = f"Gemini API Error (HTTP {e.code}): {message}"
+                    break
+            except Exception as e:
+                last_err = f"Network connection error to Gemini: {str(e)}"
+                break
             
-    raise Exception(f"All Gemini models failed. Last error: {last_err}")
+    raise Exception(f"Gemini API call failed: {last_err}")
 
+# ==========================================
+# HYBRID EXTRACTION (AI + OCR / DETERMINISTIC PARSER)
+# ==========================================
 
-def run_gemini_extraction(api_key: str, filename: str, mime_type: str, file_bytes: bytes) -> ExtractionResponse:
-    """Performs document classification and schema extraction using the Gemini 2.5 API."""
+def run_document_extraction(
+    api_key: Optional[str],
+    filename: str,
+    mime_type: str,
+    file_bytes: bytes
+) -> ExtractionResponse:
+    """Executes end-to-end document processing:
+    1. Extracts text from PDF or raw bytes.
+    2. Uses Gemini Multimodal API if an API key is present.
+    3. If Gemini is unavailable, uses deterministic parser on actual document contents.
+    4. Never returns canned demo fixtures for real user files.
+    """
     doc_id = str(uuid.uuid4())[:8]
-    
-    # 1. Base64 encode the file bytes
+    raw_text = extract_text_from_file(filename, mime_type, file_bytes)
+
+    # 1. Determine classification from content first
+    doc_type, class_conf = classify_by_content(raw_text, filename)
+
+    # 2. Try Gemini Live API if API key is supplied
+    if api_key and api_key.strip():
+        try:
+            return _execute_gemini_extraction(
+                api_key=api_key.strip(),
+                doc_id=doc_id,
+                filename=filename,
+                mime_type=mime_type,
+                file_bytes=file_bytes,
+                initial_doc_type=doc_type,
+                initial_class_conf=class_conf,
+                raw_text=raw_text
+            )
+        except Exception as e:
+            # Fall back to deterministic parsing with explicit warning
+            return _execute_deterministic_fallback(
+                doc_id=doc_id,
+                filename=filename,
+                raw_text=raw_text,
+                doc_type=doc_type,
+                class_conf=class_conf,
+                fallback_reason=f"Gemini AI unavailable ({str(e)}). Processed via deterministic parser."
+            )
+    else:
+        # No API Key provided: process document using deterministic parser
+        return _execute_deterministic_fallback(
+            doc_id=doc_id,
+            filename=filename,
+            raw_text=raw_text,
+            doc_type=doc_type,
+            class_conf=class_conf,
+            fallback_reason="Gemini API key not configured. Processed via local deterministic parser."
+        )
+
+def _execute_gemini_extraction(
+    api_key: str,
+    doc_id: str,
+    filename: str,
+    mime_type: str,
+    file_bytes: bytes,
+    initial_doc_type: str,
+    initial_class_conf: float,
+    raw_text: str
+) -> ExtractionResponse:
+    """Executes Gemini Multimodal classification and extraction."""
     base64_data = base64.b64encode(file_bytes).decode("utf-8")
     
-    # Standard fallback mime types
     if not mime_type or mime_type == "application/octet-stream":
         if filename.endswith(".pdf"):
             mime_type = "application/pdf"
@@ -279,81 +374,40 @@ def run_gemini_extraction(api_key: str, filename: str, mime_type: str, file_byte
             mime_type = "image/png"
         else:
             mime_type = "image/jpeg"
-            
-    # 2. Call Gemini for Classification
+
+    # Step 1: Multimodal Classification
     classify_prompt = (
-        "Analyze the provided document (PDF or image). Classify it into one of these four exact categories:\n"
-        "1. 'Invoice'\n"
-        "2. 'Delivery Note'\n"
-        "3. 'Contract'\n"
-        "4. 'Unknown'\n\n"
-        "Output ONLY the category name. Do not write any other description, explanation, or tags."
+        "Analyze the provided document (PDF or image). Classify it into one of these exact categories:\n"
+        "1. 'Invoice'\n2. 'Delivery Note'\n3. 'Contract'\n4. 'Unknown'\n\n"
+        "Output ONLY the category name."
     )
-    
     classify_payload = {
         "contents": [{
             "parts": [
-                {
-                    "inlineData": {
-                        "mimeType": mime_type,
-                        "data": base64_data
-                    }
-                },
-                {
-                    "text": classify_prompt
-                }
+                {"inlineData": {"mimeType": mime_type, "data": base64_data}},
+                {"text": classify_prompt}
             ]
         }]
     }
-    
+
+    doc_type = initial_doc_type
+    class_conf = initial_class_conf
     try:
-        classify_res = call_gemini_api(api_key, classify_payload)
-        candidate_parts = classify_res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        doc_type_raw = "".join([p.get("text", "") for p in candidate_parts if isinstance(p, dict)]).strip()
-        
-        # Parse classification response
-        doc_type = "Unknown"
+        c_res = call_gemini_api(api_key, classify_payload)
+        candidate_parts = c_res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+        c_text = "".join([p.get("text", "") for p in candidate_parts if isinstance(p, dict)]).strip()
         for candidate in ["Invoice", "Delivery Note", "Contract"]:
-            if candidate.lower() in doc_type_raw.lower():
+            if candidate.lower() in c_text.lower():
                 doc_type = candidate
+                class_conf = 0.95
                 break
-    except Exception as e:
-        # Fallback to content-based deterministic classification (never filename)
-        raw_text = ""
-        try:
-            raw_text = file_bytes.decode("utf-8", errors="ignore").lower()
-        except Exception:
-            pass
-        
-        doc_type = "Unknown"
-        if "invoice" in raw_text or "subtotal" in raw_text or "amount due" in raw_text or "tax" in raw_text:
-            doc_type = "Invoice"
-        elif "delivery note" in raw_text or "goods received" in raw_text or "received by" in raw_text or "purchase order" in raw_text:
-            doc_type = "Delivery Note"
-        elif "agreement" in raw_text or "parties" in raw_text or "effective date" in raw_text or "governing law" in raw_text:
-            doc_type = "Contract"
-        else:
+        if "unknown" in c_text.lower():
             doc_type = "Unknown"
-            
-        fallback_data = {}
-        if doc_type == "Invoice":
-            fallback_data = copy.deepcopy(MOCK_INVOICE_STANDARD)
-        elif doc_type == "Delivery Note":
-            fallback_data = copy.deepcopy(MOCK_DELIVERY_NOTE_STANDARD)
-        elif doc_type == "Contract":
-            fallback_data = copy.deepcopy(MOCK_CONTRACT_STANDARD)
-            
-        return ExtractionResponse(
-            id=doc_id,
-            filename=filename,
-            doc_type=doc_type,
-            extracted_data=fallback_data,
-            confidence=0.55 if doc_type != "Unknown" else 0.20,
-            review_required=True,
-            review_reasons=[f"Gemini API unavailable ({str(e)}). Processed via content heuristics.", "Confidence adjusted for human review."],
-            status="Pending"
-        )
-        
+            class_conf = 0.90
+    except Exception:
+        # Keep initial content-based classification
+        pass
+
     if doc_type == "Unknown":
         return ExtractionResponse(
             id=doc_id,
@@ -361,211 +415,210 @@ def run_gemini_extraction(api_key: str, filename: str, mime_type: str, file_byte
             doc_type="Unknown",
             extracted_data={},
             confidence=0.20,
+            classification_confidence=class_conf,
             review_required=True,
-            review_reasons=["LLM classified document type as Unknown/Unsupported."],
+            review_reasons=["Document classified as Unknown/Unsupported type."],
             status="Pending"
         )
 
-    # 3. Define schema for Extraction
-    schema_definition = {}
-    prompt = ""
-    
+    # Step 2: Extraction Prompt with JSON output instruction
     if doc_type == "Invoice":
-        schema_definition = {
-            "type": "OBJECT",
-            "properties": {
-                "invoice_number": {"type": "STRING"},
-                "invoice_date": {"type": "STRING"},
-                "vendor_name": {"type": "STRING"},
-                "line_items": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "description": {"type": "STRING"},
-                            "quantity": {"type": "NUMBER"},
-                            "price": {"type": "NUMBER"},
-                            "amount": {"type": "NUMBER"}
-                        },
-                        "required": ["description", "quantity", "price", "amount"]
-                    }
-                },
-                "subtotal": {"type": "NUMBER"},
-                "tax": {"type": "NUMBER"},
-                "total": {"type": "NUMBER"},
-                "due_date": {"type": "STRING"}
-            },
-            "required": ["invoice_number", "invoice_date", "vendor_name", "subtotal", "tax", "total"]
-        }
-        prompt = (
-            "You are a document extraction expert. Extract the details of the invoice into the requested JSON schema. "
-            "If any numeric field is unreadable, default it to 0.0. If text fields are unreadable or missing, put 'MISSING'."
+        extract_prompt = (
+            "You are an expert document extraction system. Analyze the document and extract structured JSON matching this schema:\n"
+            "{\n"
+            '  "invoice_number": "string (mandatory)",\n'
+            '  "invoice_date": "string (YYYY-MM-DD or raw date)",\n'
+            '  "vendor_name": "string (mandatory)",\n'
+            '  "buyer_name": "string or null",\n'
+            '  "due_date": "string or null",\n'
+            '  "currency": "string (INR, USD, EUR, etc. - detect accurately from symbols ₹, $, etc.)",\n'
+            '  "line_items": [{"description": "string", "quantity": number, "price": number, "amount": number}],\n'
+            '  "subtotal": number,\n'
+            '  "tax": number,\n'
+            '  "total": number\n'
+            "}\n"
+            "DO NOT substitute default or demo data. Extract the exact values present in the document. "
+            "Output ONLY valid JSON."
         )
-        
     elif doc_type == "Delivery Note":
-        schema_definition = {
-            "type": "OBJECT",
-            "properties": {
-                "delivery_note_id": {"type": "STRING"},
-                "delivery_date": {"type": "STRING"},
-                "recipient_name": {"type": "STRING"},
-                "sender_name": {"type": "STRING"},
-                "po_number": {"type": "STRING"},
-                "items": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "description": {"type": "STRING"},
-                            "quantity": {"type": "NUMBER"},
-                            "unit": {"type": "STRING"}
-                        },
-                        "required": ["description", "quantity"]
-                    }
-                },
-                "carrier_name": {"type": "STRING"},
-                "received_by": {"type": "STRING"}
-            },
-            "required": ["delivery_note_id", "delivery_date", "recipient_name", "sender_name"]
-        }
-        prompt = (
-            "You are a document extraction expert. Extract the details of the delivery note into the requested JSON schema. "
-            "If some parts are unreadable, fill with 'MISSING' or 0.0."
+        extract_prompt = (
+            "Extract structured JSON matching this schema:\n"
+            "{\n"
+            '  "delivery_note_id": "string",\n'
+            '  "delivery_date": "string",\n'
+            '  "recipient_name": "string",\n'
+            '  "sender_name": "string",\n'
+            '  "po_number": "string or null",\n'
+            '  "items": [{"description": "string", "quantity": number, "unit": "string"}],\n'
+            '  "carrier_name": "string or null",\n'
+            '  "received_by": "string or null"\n'
+            "}\n"
+            "Extract actual document values only. Output ONLY valid JSON."
         )
-        
-    elif doc_type == "Contract":
-        schema_definition = {
-            "type": "OBJECT",
-            "properties": {
-                "contract_id": {"type": "STRING"},
-                "contract_date": {"type": "STRING"},
-                "parties": {
-                    "type": "ARRAY",
-                    "items": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "name": {"type": "STRING"},
-                            "role": {"type": "STRING"}
-                        },
-                        "required": ["name", "role"]
-                    }
-                },
-                "effective_date": {"type": "STRING"},
-                "expiration_date": {"type": "STRING"},
-                "contract_amount": {"type": "NUMBER"},
-                "contract_type": {"type": "STRING"},
-                "key_clauses": {
-                    "type": "ARRAY",
-                    "items": {"type": "STRING"}
-                }
-            },
-            "required": ["contract_id", "contract_date", "parties", "effective_date", "contract_type"]
-        }
-        prompt = (
-            "You are a contract analyst. Extract the parameters of this contract into the requested JSON schema. "
-            "Identify key terms, parties, and milestones. Include key clauses verbatim if possible."
+    else:  # Contract
+        extract_prompt = (
+            "Extract structured JSON matching this schema:\n"
+            "{\n"
+            '  "contract_id": "string",\n'
+            '  "contract_date": "string",\n'
+            '  "parties": [{"name": "string", "role": "string"}],\n'
+            '  "effective_date": "string",\n'
+            '  "expiration_date": "string or null",\n'
+            '  "contract_amount": number or null,\n'
+            '  "currency": "string or null",\n'
+            '  "contract_type": "string",\n'
+            '  "key_clauses": ["string"]\n'
+            "}\n"
+            "Extract actual document values only. Output ONLY valid JSON."
         )
 
-    # 4. Call Gemini with Structured JSON Schema
     extract_payload = {
         "contents": [{
             "parts": [
-                {
-                    "inlineData": {
-                        "mimeType": mime_type,
-                        "data": base64_data
-                    }
-                },
-                {
-                    "text": prompt
-                }
+                {"inlineData": {"mimeType": mime_type, "data": base64_data}},
+                {"text": extract_prompt}
             ]
         }],
         "generationConfig": {
-            "responseMimeType": "application/json",
-            "responseSchema": schema_definition
+            "responseMimeType": "application/json"
         }
     }
+
+    ext_res = call_gemini_api(api_key, extract_payload)
+    candidate_parts = ext_res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
+    ext_text = "".join([p.get("text", "") for p in candidate_parts if isinstance(p, dict)]).strip()
+
+    # Clean markdown if present
+    if ext_text.startswith("```"):
+        lines = ext_text.split("\n")
+        if lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].startswith("```"):
+            lines = lines[:-1]
+        ext_text = "\n".join(lines).strip()
+
+    extracted_data = json.loads(ext_text)
+
+    # Step 3: Validate and score confidence
+    confidence, review_required, review_reasons = _evaluate_extraction_confidence(doc_type, extracted_data, filename)
+
+    return ExtractionResponse(
+        id=doc_id,
+        filename=filename,
+        doc_type=doc_type,
+        extracted_data=extracted_data,
+        confidence=round(confidence, 2),
+        classification_confidence=round(class_conf, 2),
+        review_required=review_required,
+        review_reasons=review_reasons,
+        status="Pending"
+    )
+
+def _execute_deterministic_fallback(
+    doc_id: str,
+    filename: str,
+    raw_text: str,
+    doc_type: str,
+    class_conf: float,
+    fallback_reason: str
+) -> ExtractionResponse:
+    """Parses actual document text using deterministic OCR heuristics without fabricating dummy data."""
+    extracted_data = {}
+    review_reasons = [fallback_reason]
     
-    try:
-        extract_res = call_gemini_api(api_key, extract_payload)
-        candidate_parts = extract_res.get("candidates", [{}])[0].get("content", {}).get("parts", [])
-        extracted_data_str = "".join([p.get("text", "") for p in candidate_parts if isinstance(p, dict)]).strip()
-        # Clean any potential markdown wrapping
-        if extracted_data_str.startswith("```"):
-            lines = extracted_data_str.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            extracted_data_str = "\n".join(lines).strip()
-        extracted_data = json.loads(extracted_data_str)
-        
-        # 5. Evaluate confidence & review requirements
-        confidence = 0.95
-        review_reasons = []
-        review_required = False
-        
-        # Heuristic analysis on results
-        if doc_type == "Invoice":
-            # Validations:
-            # Check if total equals subtotal + tax (allowing tiny float errors)
-            total = extracted_data.get("total", 0.0)
-            subtotal = extracted_data.get("subtotal", 0.0)
-            tax = extracted_data.get("tax", 0.0)
-            
-            if total == 0.0:
-                review_reasons.append("Extracted invoice total is 0.0")
-                confidence -= 0.20
-            elif abs(total - (subtotal + tax)) > 1.0:
-                review_reasons.append(f"Subtotal ({subtotal}) + Tax ({tax}) does not sum to Total ({total})")
-                confidence -= 0.15
-                
-            if '"MISSING"' in json.dumps(extracted_data):
-                review_reasons.append("One or more critical fields were labeled as MISSING by LLM")
-                confidence -= 0.15
-                
-        elif doc_type == "Delivery Note":
-            if not extracted_data.get("items") or len(extracted_data["items"]) == 0:
-                review_reasons.append("No delivered items were extracted")
-                confidence -= 0.25
-                
-        elif doc_type == "Contract":
-            parties = extracted_data.get("parties", [])
-            if len(parties) < 2:
-                review_reasons.append("Less than two contracting parties identified")
-                confidence -= 0.15
-        
-        # Lower confidence if layout suggests it
-        if "blurry" in filename.lower() or "low" in filename.lower():
-            confidence -= 0.20
-            review_reasons.append("Filename indicators suggest low-quality input document")
-            
-        confidence = max(0.1, min(0.99, confidence))
-        
-        if confidence < 0.75:
-            review_required = True
-            review_reasons.append(f"Extraction confidence ({int(confidence*100)}%) below approval threshold (75%)")
-            
-        return ExtractionResponse(
-            id=doc_id,
-            filename=filename,
-            doc_type=doc_type,
-            extracted_data=extracted_data,
-            confidence=round(confidence, 2),
-            review_required=review_required,
-            review_reasons=review_reasons,
-            status="Pending"
-        )
-        
-    except Exception as e:
+    if not raw_text or len(raw_text.strip()) < 10:
         return ExtractionResponse(
             id=doc_id,
             filename=filename,
             doc_type=doc_type,
             extracted_data={},
-            confidence=0.30,
+            confidence=0.20,
+            classification_confidence=round(class_conf, 2),
             review_required=True,
-            review_reasons=[f"Extraction failed: {str(e)}"],
+            review_reasons=[fallback_reason, "No extractable text found in document. Manual entry or visual inspection required."],
             status="Pending"
         )
+
+    if doc_type == "Invoice":
+        extracted_data = parse_deterministic_invoice(raw_text)
+    elif doc_type == "Delivery Note":
+        extracted_data = parse_deterministic_delivery_note(raw_text)
+    elif doc_type == "Contract":
+        extracted_data = parse_deterministic_contract(raw_text)
+
+    confidence, review_required, eval_reasons = _evaluate_extraction_confidence(doc_type, extracted_data, filename)
+    # Mark review_required as True for all fallback pipeline extractions
+    review_required = True
+    review_reasons.extend(eval_reasons)
+
+    return ExtractionResponse(
+        id=doc_id,
+        filename=filename,
+        doc_type=doc_type,
+        extracted_data=extracted_data,
+        confidence=round(min(0.85, confidence), 2),
+        classification_confidence=round(class_conf, 2),
+        review_required=review_required,
+        review_reasons=review_reasons,
+        status="Pending"
+    )
+
+def _evaluate_extraction_confidence(doc_type: str, data: Dict[str, Any], filename: str) -> Tuple[float, bool, List[str]]:
+    """Calculates factual confidence and review flags based on schema completeness and arithmetic consistency."""
+    confidence = 0.95
+    review_reasons = []
+    
+    if doc_type == "Invoice":
+        if not data.get("invoice_number"):
+            review_reasons.append("Invoice Number is missing or unreadable")
+            confidence -= 0.15
+        if not data.get("vendor_name"):
+            review_reasons.append("Vendor Name is missing or unreadable")
+            confidence -= 0.15
+        if not data.get("line_items"):
+            review_reasons.append("No line items could be extracted")
+            confidence -= 0.20
+            
+        subtotal = float(data.get("subtotal") or 0.0)
+        tax = float(data.get("tax") or 0.0)
+        total = float(data.get("total") or 0.0)
+        
+        if total == 0.0 and subtotal == 0.0:
+            review_reasons.append("Financial amounts could not be extracted (Total is 0.0)")
+            confidence -= 0.25
+        elif subtotal > 0 and abs(total - (subtotal + tax)) > 1.5:
+            review_reasons.append(f"Arithmetic discrepancy: Subtotal ({subtotal}) + Tax ({tax}) does not equal Total ({total})")
+            confidence -= 0.15
+
+    elif doc_type == "Delivery Note":
+        if not data.get("delivery_note_id"):
+            review_reasons.append("Delivery Note ID is missing")
+            confidence -= 0.15
+        if not data.get("recipient_name"):
+            review_reasons.append("Recipient Name is missing")
+            confidence -= 0.15
+        if not data.get("items"):
+            review_reasons.append("Delivered items list is empty")
+            confidence -= 0.25
+
+    elif doc_type == "Contract":
+        if not data.get("contract_id"):
+            review_reasons.append("Contract ID is missing")
+            confidence -= 0.15
+        parties = data.get("parties", [])
+        if len(parties) < 2:
+            review_reasons.append("Fewer than two contracting parties identified")
+            confidence -= 0.20
+
+    if "blurry" in filename.lower() or "low_quality" in filename.lower():
+        confidence -= 0.20
+        review_reasons.append("Low-quality / blurry document flag detected")
+
+    confidence = max(0.10, min(0.99, confidence))
+    review_required = (confidence < 0.75) or (len(review_reasons) > 0)
+    
+    return confidence, review_required, review_reasons
+
+# Backward compatibility alias
+def run_gemini_extraction(api_key: str, filename: str, mime_type: str, file_bytes: bytes) -> ExtractionResponse:
+    return run_document_extraction(api_key, filename, mime_type, file_bytes)

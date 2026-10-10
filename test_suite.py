@@ -1,14 +1,34 @@
-﻿import unittest
+import unittest
 import io
 import json
 from fastapi.testclient import TestClient
 
-from app.main import app, documents_db
+from app.main import app
 from app.models import InvoiceSchema, DeliveryNoteSchema, ContractSchema, ExtractionResponse
-from app.extractor import get_mock_extraction, classify_by_filename, run_gemini_extraction
+from app.extractor import get_mock_extraction, classify_by_filename, run_document_extraction, classify_by_content
+from app.database import get_document_by_id, get_all_documents, save_document
 
 client = TestClient(app)
 
+SAMPLE_BLUEPEAK_INVOICE = b"""
+INVOICE
+Invoice Number: BP-INV-2026-1048
+Invoice Date: 08-Oct-2026
+Due Date: 07-Nov-2026
+Vendor: BluePeak Office Supplies Pvt. Ltd.
+Buyer: Global Tech Solutions Ltd.
+Currency: INR
+
+Line Items:
+1. Ergonomic Mesh Chair | Qty: 2 | Price: 1500.00 | Amount: 3000.00
+2. Wireless Keyboard & Mouse Combo | Qty: 3 | Price: 350.00 | Amount: 1050.00
+3. Desk Organizer Tray | Qty: 4 | Price: 90.00 | Amount: 360.00
+
+Subtotal: 4410.00
+CGST (9%): 329.40
+SGST (9%): 329.40
+Total: 5068.80
+"""
 
 class TestDocuExtractComprehensive(unittest.TestCase):
 
@@ -76,13 +96,13 @@ class TestDocuExtractComprehensive(unittest.TestCase):
 
     def test_11_content_fallback_invoice_with_contract_name(self):
         raw_bytes = b"Invoice Number: INV-9901\nVendor: Apex Tools\nSubtotal: 500.00\nTax: 50.00\nTotal: 550.00"
-        res = run_gemini_extraction("dummy_invalid_key", "contract_agreement.pdf", "application/pdf", raw_bytes)
+        res = run_document_extraction(None, "contract_agreement.pdf", "application/pdf", raw_bytes)
         self.assertEqual(res.doc_type, "Invoice")
         self.assertTrue(res.review_required)
 
     def test_12_content_fallback_delivery_with_invoice_name(self):
         raw_bytes = b"Delivery Note ID: DN-101\nReceived by: John Doe\nGoods Received: 50 units\nPurchase Order: PO-99"
-        res = run_gemini_extraction("dummy_invalid_key", "invoice_bill.pdf", "application/pdf", raw_bytes)
+        res = run_document_extraction(None, "invoice_bill.pdf", "application/pdf", raw_bytes)
         self.assertEqual(res.doc_type, "Delivery Note")
         self.assertTrue(res.review_required)
 
@@ -132,11 +152,52 @@ class TestDocuExtractComprehensive(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 413)
 
-    def test_19_api_document_status_update(self):
-        doc_id = documents_db[0].id
-        res = client.post(f"/api/documents/{doc_id}/verify", json={"invoice_number": "INV-VERIFIED-101"})
+    def test_19_api_document_status_update_and_persistence(self):
+        docs = get_all_documents()
+        doc_id = docs[0].id
+        orig_data = docs[0].extracted_data
+        updated_data = dict(orig_data)
+        updated_data["vendor_name"] = "Verified Corporate Vendor Ltd."
+        
+        res = client.post(f"/api/documents/{doc_id}/verify", json=updated_data)
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "Verified")
+        
+        # Verify persistence across database lookup
+        persisted = get_document_by_id(doc_id)
+        self.assertIsNotNone(persisted)
+        self.assertEqual(persisted.status, "Verified")
+        self.assertEqual(persisted.extracted_data["vendor_name"], "Verified Corporate Vendor Ltd.")
+
+    def test_20_user_fixture_bluepeak_invoice_extraction(self):
+        """Validates exact extraction on the user's test invoice without canned mock data substitution."""
+        res = run_document_extraction(
+            api_key=None,  # Tests deterministic parser fallback
+            filename="Vendor_Bill_BluePeak.pdf",
+            mime_type="application/pdf",
+            file_bytes=SAMPLE_BLUEPEAK_INVOICE
+        )
+        self.assertEqual(res.doc_type, "Invoice")
+        data = res.extracted_data
+        
+        # Check expected information from the specification
+        self.assertEqual(data["invoice_number"], "BP-INV-2026-1048")
+        self.assertEqual(data["vendor_name"], "BluePeak Office Supplies Pvt. Ltd.")
+        self.assertEqual(data["currency"], "INR")
+        self.assertEqual(len(data["line_items"]), 3)
+        self.assertEqual(data["line_items"][0]["description"], "Ergonomic Mesh Chair")
+        self.assertEqual(data["line_items"][0]["quantity"], 2.0)
+        self.assertEqual(data["line_items"][0]["price"], 1500.0)
+        self.assertEqual(data["line_items"][0]["amount"], 3000.0)
+        self.assertEqual(data["subtotal"], 4410.0)
+        self.assertEqual(data["total"], 5068.80)
+
+    def test_21_health_check_endpoint(self):
+        res = client.get("/health")
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "healthy")
+        self.assertEqual(data["database"], "sqlite_ready")
 
 
 if __name__ == "__main__":

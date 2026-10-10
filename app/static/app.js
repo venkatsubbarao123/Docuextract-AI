@@ -379,6 +379,8 @@ function renderDocumentVisual(doc) {
   const data = doc.extracted_data;
 
   if (doc.doc_type === "Invoice" && data && Object.keys(data).length > 0) {
+    const curr = (data.currency || "USD").toUpperCase();
+    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
     html = `
       <div class="space-y-1">
         <p class="text-[10px] text-slate-400 font-semibold">VENDOR</p>
@@ -395,12 +397,12 @@ function renderDocumentVisual(doc) {
         </div>
       </div>
       <div class="border-t border-slate-800 pt-2">
-        <span class="text-[10px] text-slate-500 block mb-1">LINE ITEMS</span>
+        <span class="text-[10px] text-slate-500 block mb-1">LINE ITEMS (${curr})</span>
         <div class="space-y-1.5">
           ${(data.line_items || []).map(item => `
             <div class="flex justify-between items-center text-[10px] bg-slate-950 p-1.5 rounded border border-slate-900">
               <span class="text-slate-300 truncate max-w-[160px]">${item.description}</span>
-              <span class="text-slate-400 font-mono font-medium">${item.quantity} x $${item.price.toFixed(2)}</span>
+              <span class="text-slate-400 font-mono font-medium">${item.quantity} x ${currSym}${(item.price || 0).toFixed(2)}</span>
             </div>
           `).join('')}
         </div>
@@ -408,7 +410,7 @@ function renderDocumentVisual(doc) {
       <div class="border-t border-slate-800 pt-2 mt-auto">
         <div class="flex justify-between items-center text-xs">
           <span class="text-slate-500 font-medium">TOTAL AMOUNT DUE</span>
-          <span class="text-base font-bold text-emerald-400 font-mono">$${(data.total || 0).toFixed(2)}</span>
+          <span class="text-base font-bold text-emerald-400 font-mono">${currSym}${(data.total || 0).toFixed(2)}</span>
         </div>
       </div>
     `;
@@ -546,6 +548,8 @@ function renderExtractionForm(doc) {
   }
 
   if (doc.doc_type === "Invoice") {
+    const curr = (data.currency || "USD").toUpperCase();
+    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
     // Generate Invoice Form
     form.innerHTML = `
       <div class="grid grid-cols-2 gap-4">
@@ -557,9 +561,13 @@ function renderExtractionForm(doc) {
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Invoice Date</label>
           <input type="text" name="invoice_date" value="${data.invoice_date || ''}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium shadow-sm focus:outline-none transition">
         </div>
-        <div class="col-span-2">
+        <div>
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Vendor Name</label>
           <input type="text" name="vendor_name" value="${data.vendor_name || ''}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium shadow-sm focus:outline-none transition">
+        </div>
+        <div>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Currency</label>
+          <input type="text" name="currency" value="${curr}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium shadow-sm focus:outline-none transition">
         </div>
       </div>
 
@@ -579,8 +587,8 @@ function renderExtractionForm(doc) {
               <tr class="text-slate-400 border-b border-slate-750 font-semibold">
                 <th class="pb-2 w-[48%]">Description</th>
                 <th class="pb-2 text-center w-[14%]">Qty</th>
-                <th class="pb-2 text-right w-[16%]">Price ($)</th>
-                <th class="pb-2 text-right w-[16%]">Amount ($)</th>
+                <th class="pb-2 text-right w-[16%]">Price (${currSym})</th>
+                <th class="pb-2 text-right w-[16%]">Amount (${currSym})</th>
                 <th class="pb-2 text-center w-[6%]"></th>
               </tr>
             </thead>
@@ -591,13 +599,13 @@ function renderExtractionForm(doc) {
                     <input type="text" value="${item.description || ''}" required class="item-desc w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition">
                   </td>
                   <td class="py-2 px-2 text-center">
-                    <input type="number" step="any" value="${item.quantity || 0}" required class="item-qty w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-center rounded-md px-2 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
+                    <input type="number" step="any" value="${item.quantity || 0}" required class="item-qty w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-center rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
                   </td>
                   <td class="py-2 px-2 text-right">
-                    <input type="number" step="0.01" value="${item.price || 0}" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
+                    <input type="number" step="0.01" value="${item.price || 0}" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
                   </td>
                   <td class="py-2 pl-2 text-right text-emerald-400 font-mono font-bold item-amount-val text-xs">
-                    $${(item.amount || 0).toFixed(2)}
+                    ${currSym}${(item.amount || 0).toFixed(2)}
                   </td>
                   <td class="py-2 text-center">
                     <button type="button" onclick="removeInvoiceItemRow(this)" class="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-500/10 rounded transition">
@@ -614,15 +622,15 @@ function renderExtractionForm(doc) {
       <!-- Financial Totals -->
       <div class="border-t border-slate-800 pt-4 grid grid-cols-3 gap-4">
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Subtotal ($)</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Subtotal (${currSym})</label>
           <input type="number" step="0.01" name="subtotal" value="${data.subtotal || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Tax ($)</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Tax (${currSym})</label>
           <input type="number" step="0.01" name="tax" value="${data.tax || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Total ($)</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Total (${currSym})</label>
           <input type="number" step="0.01" name="total" value="${data.total || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-emerald-400 font-mono font-bold focus:outline-none transition">
         </div>
         <div class="col-span-2">
@@ -951,36 +959,38 @@ window.initializeUnknownDocAs = function(targetType) {
   
   if (targetType === "Invoice") {
     doc.extracted_data = {
-      invoice_number: "INV-VERIFY-NEW",
+      invoice_number: "",
       invoice_date: new Date().toISOString().split('T')[0],
-      vendor_name: "Supplier Company Name",
-      line_items: [{description: "Standard Supply item", quantity: 1.0, price: 100.00, amount: 100.00}],
-      subtotal: 100.00,
-      tax: 10.00,
-      total: 110.00,
+      vendor_name: "",
+      currency: "INR",
+      line_items: [{description: "", quantity: 1.0, price: 0.0, amount: 0.0}],
+      subtotal: 0.0,
+      tax: 0.0,
+      total: 0.0,
       due_date: ""
     };
   } else if (targetType === "Delivery Note") {
     doc.extracted_data = {
-      delivery_note_id: "DN-VERIFY-NEW",
+      delivery_note_id: "",
       delivery_date: new Date().toISOString().split('T')[0],
-      recipient_name: "Recipient Corp",
-      sender_name: "Supplier Corp",
+      recipient_name: "",
+      sender_name: "",
       po_number: "",
-      items: [{description: "Item name", quantity: 10.0, unit: "pcs"}],
+      items: [{description: "", quantity: 1.0, unit: "pcs"}],
       carrier_name: "",
       received_by: ""
     };
   } else if (targetType === "Contract") {
     doc.extracted_data = {
-      contract_id: "AGR-VERIFY-NEW",
+      contract_id: "",
       contract_date: new Date().toISOString().split('T')[0],
-      parties: [{name: "Primary Party 1", role: "Client"}, {name: "Primary Party 2", role: "Vendor"}],
+      parties: [{name: "", role: "Client"}, {name: "", role: "Vendor"}],
       effective_date: new Date().toISOString().split('T')[0],
       expiration_date: "",
-      contract_amount: 0,
+      contract_amount: 0.0,
+      currency: "USD",
       contract_type: "Agreement",
-      key_clauses: ["Default standard service clauses apply."]
+      key_clauses: []
     };
   }
 
@@ -1058,6 +1068,8 @@ async function submitApproval() {
     verifiedPayload.invoice_number = document.getElementsByName("invoice_number")[0].value;
     verifiedPayload.invoice_date = document.getElementsByName("invoice_date")[0].value;
     verifiedPayload.vendor_name = document.getElementsByName("vendor_name")[0].value;
+    const currInput = document.getElementsByName("currency")[0];
+    verifiedPayload.currency = currInput ? currInput.value : (doc.extracted_data.currency || "USD");
     verifiedPayload.subtotal = parseFloat(subtotalInput ? subtotalInput.value : 0) || 0;
     verifiedPayload.tax = parseFloat(taxInput ? taxInput.value : 0) || 0;
     verifiedPayload.total = parseFloat(totalInput ? totalInput.value : 0) || 0;
