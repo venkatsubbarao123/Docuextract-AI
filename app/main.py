@@ -209,7 +209,17 @@ async def health_check():
     return {
         "status": "healthy",
         "gemini_api_configured": has_api_key,
-        "database": "sqlite_ready"
+        "database": "sqlite_ready",
+        "engine": "Gemini Live Vision AI" if has_api_key else "Deterministic OCR Parser"
+    }
+
+@app.get("/api/config")
+async def get_config():
+    """Returns server-level configuration flags for frontend initialization."""
+    has_api_key = bool(os.getenv("GEMINI_API_KEY", "").strip())
+    return {
+        "has_server_api_key": has_api_key,
+        "engine": "Gemini Multimodal AI" if has_api_key else "Deterministic OCR Parser"
     }
 
 @app.post("/api/extract", response_model=ExtractionResponse)

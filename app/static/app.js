@@ -11,27 +11,38 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // Setup Engine and Settings
-function initEngine() {
+async function initEngine() {
   const savedKey = localStorage.getItem("gemini_api_key");
   if (savedKey) {
     document.getElementById("input-api-key").value = savedKey;
-    updateEngineStatus(true);
+    updateEngineStatus(true, "Client Key Active");
   } else {
-    updateEngineStatus(false);
+    // Check if server has GEMINI_API_KEY environment variable configured
+    try {
+      const res = await fetch("/api/config");
+      if (res.ok) {
+        const cfg = await res.json();
+        if (cfg.has_server_api_key) {
+          updateEngineStatus(true, "Server Gemini AI Active");
+          return;
+        }
+      }
+    } catch (e) {}
+    updateEngineStatus(false, "Deterministic OCR Engine");
   }
   lucide.createIcons();
 }
 
-function updateEngineStatus(hasKey) {
+function updateEngineStatus(hasKey, label) {
   const indicator = document.getElementById("engine-status-indicator");
   const text = document.getElementById("engine-status-text");
   
   if (hasKey) {
-    indicator.className = "w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse";
-    text.innerText = "Engine: Gemini Flash";
+    indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
+    text.innerText = label ? `Engine: ${label}` : "Engine: Gemini Flash AI";
   } else {
-    indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse";
-    text.innerText = "Engine: Mock Mode";
+    indicator.className = "w-2.5 h-2.5 rounded-full bg-amber-400";
+    text.innerText = label ? `Engine: ${label}` : "Engine: Deterministic OCR";
   }
 }
 
