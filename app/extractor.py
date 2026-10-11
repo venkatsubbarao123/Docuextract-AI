@@ -257,14 +257,21 @@ def get_mock_extraction(filename: str) -> ExtractionResponse:
 
 def call_gemini_api(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     """Helper to perform HTTP POST to Google Gemini API with error distinction, backoff, and model fallback."""
-    models = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+    models = [
+        "gemini-3.5-flash",
+        "gemini-3.7-flash",
+        "gemini-3.6-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-3.8-flash"
+    ]
     last_err = None
     headers = {"Content-Type": "application/json"}
     
     for model in models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         
-        # Retry loop for transient issues (503, 429)
+        # Retry loop for transient 503 issues; immediately cascade to next model on 429 quota exhaustion
         max_retries = 2
         for attempt in range(max_retries):
             req = urllib.request.Request(
@@ -291,10 +298,11 @@ def call_gemini_api(api_key: str, payload: Dict[str, Any]) -> Dict[str, Any]:
                     break
                 elif e.code == 429:
                     last_err = "Gemini API Quota/Rate Limit Exceeded (HTTP 429). Please check your quota or wait."
-                    time.sleep(1.0 + random.random() * 0.5)
+                    # Immediately cascade to next available model in list
+                    break
                 elif e.code == 503:
                     last_err = f"Gemini API Service Temporarily Unavailable (HTTP 503): {message}"
-                    time.sleep(1.0 + random.random() * 0.5)
+                    time.sleep(0.5 + random.random() * 0.5)
                 else:
                     last_err = f"Gemini API Error (HTTP {e.code}): {message}"
                     break
