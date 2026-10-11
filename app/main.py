@@ -215,8 +215,10 @@ async def health_check():
     return {
         "status": "healthy",
         "gemini_api_configured": has_api_key,
+        "configured_model": "gemini-2.5-flash",
         "database": "sqlite_ready",
-        "default_engine": "Local Parser"
+        "default_engine": "Local Parser",
+        "commit_sha": os.getenv("RENDER_GIT_COMMIT", "local")
     }
 
 @app.get("/api/config")
@@ -225,7 +227,9 @@ async def get_config():
     has_api_key = bool(os.getenv("GEMINI_API_KEY", "").strip())
     return {
         "has_server_api_key": has_api_key,
-        "default_engine": "Local Parser"
+        "configured_model": "gemini-2.5-flash",
+        "default_engine": "Local Parser",
+        "commit_sha": os.getenv("RENDER_GIT_COMMIT", "local")
     }
 
 @app.post("/api/extract", response_model=ExtractionResponse)
@@ -334,6 +338,15 @@ async def get_stats():
 # STATIC FRONTEND ROUTES
 # ==========================================
 
+@app.middleware("http")
+async def disable_static_cache(request, call_next):
+    response = await call_next(request)
+    if request.url.path == "/" or request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 os.makedirs(static_dir, exist_ok=True)
 
@@ -344,5 +357,5 @@ async def get_index():
     """Return the frontend dashboard."""
     index_path = os.path.join(static_dir, "index.html")
     if os.path.exists(index_path):
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
     return {"detail": "Dashboard index.html not found. Please implement frontend files."}

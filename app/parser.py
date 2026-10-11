@@ -55,7 +55,7 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
         inv_num_match = re.search(r'\bINV[A-Za-z0-9\-_/]+', text, re.IGNORECASE)
     invoice_number = inv_num_match.group(1).strip() if inv_num_match else ""
 
-    # 3. Vendor Name
+    # 3. Vendor Name & Buyer Name
     vendor_name = ""
     vendor_match = re.search(r'(?:Vendor|Supplier|From|Billed\s*By)\s*[:\-]\s*([^\n\r,]+)', text, re.IGNORECASE)
     if vendor_match:
@@ -65,6 +65,11 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
             if not re.search(r'invoice|tax|bill|date', line, re.IGNORECASE) and len(line) > 3:
                 vendor_name = line.strip()
                 break
+
+    buyer_name = None
+    buyer_match = re.search(r'(?:Buyer|Bill\s*To|Billed\s*To|Customer)\s*[:\-]?\s*\n?\s*([^\n\r,]+)', text, re.IGNORECASE)
+    if buyer_match:
+        buyer_name = buyer_match.group(1).strip()
 
     # 4. Dates
     inv_date = ""
@@ -77,9 +82,12 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
     if due_match:
         due_date = due_match.group(1).strip()
 
+    # Currency token pattern (includes common PDF missing-glyph placeholders for ₹/currency)
+    curr_pat = r'(?:[₹$€£■\u25a0\ufffd]|INR|USD|EUR|GBP|Rs\.?)?'
+
     # 5. Financial totals
     subtotal = 0.0
-    sub_match = re.search(r'(?:Subtotal|Sub\s*Total|Net\s*Amount)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+    sub_match = re.search(rf'(?:Subtotal|Sub\s*Total|Net\s*Amount)\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
     if sub_match:
         subtotal = float(sub_match.group(1).replace(",", ""))
 
@@ -87,9 +95,9 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
     taxes_breakdown = []
     cgst_val = None
     sgst_val = None
-    cgst_match = re.search(r'CGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
-    sgst_match = re.search(r'SGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
-    igst_match = re.search(r'IGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+    cgst_match = re.search(rf'CGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+    sgst_match = re.search(rf'SGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+    igst_match = re.search(rf'IGST(?:\s*\([^\)]+\))?\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
     
     total_tax = 0.0
     if cgst_match:
@@ -106,12 +114,12 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
         total_tax += igst_amt
 
     if total_tax == 0.0:
-        tax_match = re.search(r'(?:Total\s*Tax|Tax|VAT|GST)\s*(?:Amount)?\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
+        tax_match = re.search(rf'(?:Total\s*Tax|Tax|VAT|GST)\s*(?:Amount)?\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE)
         if tax_match:
             total_tax = float(tax_match.group(1).replace(",", ""))
 
     # Check explicitly for Grand Total / Total line (anchored per line to avoid Subtotal / Total Tax)
-    tot_match = re.search(r'^\s*(?:Grand\s*Total|Total\s*Amount|Final\s*Total|Total\s*Due|Total)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9]+(?:,[0-9]{3})*(?:\.[0-9]+)?)', text, re.IGNORECASE | re.MULTILINE)
+    tot_match = re.search(rf'^\s*(?:Grand\s*Total|Total\s*Amount|Final\s*Total|Total\s*Due|Total\b(?!\s*(?:Tax|Rate)))\s*[:\-]?\s*{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)', text, re.IGNORECASE | re.MULTILINE)
     if tot_match:
         total = float(tot_match.group(1).replace(",", ""))
     elif subtotal > 0:
@@ -122,34 +130,69 @@ def parse_deterministic_invoice(text: str) -> Dict[str, Any]:
     # 6. Line items
     line_items = []
     # Pattern 1: e.g. "1. Item Name | Qty: 2 | Price: 1500.00 | Amount: 3000.00"
-    pipe_items = re.findall(r'(?:[0-9]+[\.\)]\s*)?([^|\n\r]+?)\s*\|\s*(?:Qty|Quantity)\s*[:\-]?\s*([0-9\.]+)\s*\|\s*(?:Price|Unit\s*Price)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9\.]+)\s*\|\s*(?:Amount|Total)\s*[:\-]?\s*(?:₹|\$|€|£|INR)?\s*([0-9\.]+)', text, re.IGNORECASE)
+    pipe_items = re.findall(rf'(?:[0-9]+[\.\)]\s*)?([^|\n\r]+?)\s*\|\s*(?:Qty|Quantity)\s*[:\-]?\s*([0-9\.]+)\s*\|\s*(?:Price|Unit\s*Price)\s*[:\-]?\s*{curr_pat}\s*([0-9,]+(?:\.[0-9]+)?)\s*\|\s*(?:Amount|Total)\s*[:\-]?\s*{curr_pat}\s*([0-9,]+(?:\.[0-9]+)?)', text, re.IGNORECASE)
     for desc, q, p, a in pipe_items:
         line_items.append({
             "description": desc.strip(),
             "quantity": float(q),
-            "price": float(p),
-            "amount": float(a)
+            "price": float(p.replace(",", "")),
+            "amount": float(a.replace(",", ""))
         })
 
-    # Pattern 2: line containing description followed by numeric qty, price, total
+    # Pattern 2: single-line tabular item containing description followed by numeric qty, price, optional tax%, total
     if not line_items:
         for line in lines:
             if re.search(r'total|subtotal|tax|date|invoice|due|buyer|vendor', line, re.IGNORECASE):
                 continue
-            m = re.match(r'(?:[0-9]+[\.\)]\s*)?([A-Za-z0-9\s\-_&,]+?)\s+([0-9]+(?:\.[0-9]+)?)\s+(?:₹|\$|€|£)?([0-9]+(?:\.[0-9]+)?)\s+(?:₹|\$|€|£)?([0-9]+(?:\.[0-9]+)?)$', line.strip())
+            m = re.match(rf'^(?:[0-9]+[\.\)]\s*)?([A-Za-z0-9\s\-_&,\(\)\/\.\'\"]+?)\s+([0-9]+(?:\.[0-9]+)?)\s+{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)(?:\s+[0-9]+(?:\.[0-9]+)?%)?\s+{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)$', line.strip())
             if m:
                 desc, q, p, a = m.groups()
                 line_items.append({
                     "description": desc.strip(),
                     "quantity": float(q),
-                    "price": float(p),
-                    "amount": float(a)
+                    "price": float(p.replace(",", "")),
+                    "amount": float(a.replace(",", ""))
                 })
+
+    # Pattern 3: multi-line PDF table cells (Description -> Qty -> Unit Price -> optional Tax Rate % -> Amount)
+    if not line_items:
+        num_re = re.compile(r'^[0-9]+(?:\.[0-9]+)?$')
+        money_re = re.compile(rf'^{curr_pat}\s*([0-9]+(?:,[0-9]{{3}})*(?:\.[0-9]+)?)$', re.IGNORECASE)
+        pct_re = re.compile(r'^[0-9]+(?:\.[0-9]+)?%$')
+        stop_re = re.compile(r'^(?:Subtotal|Sub\s*Total|CGST|SGST|IGST|Total\s*Tax|Grand\s*Total|Total|Payment\s*Instructions)$', re.IGNORECASE)
+        header_re = re.compile(r'^(?:Line\s*Items|SKU|Description|Item|Qty|Quantity|Unit\s*Price|Price|Tax\s*Rate|Amount)$', re.IGNORECASE)
+
+        i = 0
+        n = len(lines)
+        while i < n:
+            if stop_re.match(lines[i]):
+                break
+            if header_re.match(lines[i]):
+                i += 1
+                continue
+            # Check if lines[i] is a description followed by qty, price, [pct], amount
+            if i + 3 < n and num_re.match(lines[i + 1]):
+                m_price = money_re.match(lines[i + 2])
+                if m_price:
+                    amt_idx = i + 4 if (i + 4 < n and pct_re.match(lines[i + 3])) else i + 3
+                    if amt_idx < n:
+                        m_amt = money_re.match(lines[amt_idx])
+                        if m_amt and any(c.isalpha() for c in lines[i]) and not stop_re.match(lines[i]):
+                            line_items.append({
+                                "description": lines[i].strip(),
+                                "quantity": float(lines[i + 1]),
+                                "price": float(m_price.group(1).replace(",", "")),
+                                "amount": float(m_amt.group(1).replace(",", ""))
+                            })
+                            i = amt_idx + 1
+                            continue
+            i += 1
 
     return {
         "invoice_number": invoice_number,
         "invoice_date": inv_date,
         "vendor_name": vendor_name,
+        "buyer_name": buyer_name,
         "due_date": due_date,
         "currency": currency,
         "line_items": line_items,

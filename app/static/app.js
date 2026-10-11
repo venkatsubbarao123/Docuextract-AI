@@ -10,12 +10,36 @@ document.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
 });
 
+function getCurrencySymbol(curr) {
+  const c = (curr || "USD").toString().trim().toUpperCase();
+  if (c === "INR") return "₹";
+  if (c === "EUR") return "€";
+  if (c === "GBP") return "£";
+  return "$";
+}
+
+function formatCurrencyAmount(val, curr) {
+  const sym = getCurrencySymbol(curr);
+  const num = Number(val || 0);
+  return `${sym}${num.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 // Setup Engine and Settings
 async function initEngine() {
   const savedKey = localStorage.getItem("gemini_api_key");
   if (savedKey) {
     document.getElementById("input-api-key").value = savedKey;
   }
+  try {
+    const res = await fetch("/api/config");
+    if (res.ok) {
+      const cfg = await res.json();
+      const modelEl = document.getElementById("settings-configured-model");
+      if (modelEl && cfg.configured_model) {
+        modelEl.innerText = cfg.configured_model;
+      }
+    }
+  } catch (e) {}
   updateEngineStatus("Local Parser");
   lucide.createIcons();
 }
@@ -79,21 +103,24 @@ function setupEventListeners() {
 
   btnSaveSettings.addEventListener("click", () => {
     const key = inputApiKey.value.trim();
+    const activeDoc = documentsList.find(d => d.id === activeDocId);
+    const currentEngine = activeDoc ? (activeDoc.engine_used || "Local Parser") : "Local Parser";
     if (key) {
       localStorage.setItem("gemini_api_key", key);
-      showToast("Settings Saved", "Gemini API key saved. Engine status will update upon document extraction.", "success");
+      showToast("Settings Saved", "Gemini API key saved. Engine status will reflect actual extraction result.", "success");
     } else {
       localStorage.removeItem("gemini_api_key");
-      updateEngineStatus("Local Parser");
     }
+    updateEngineStatus(currentEngine);
     closeSettings();
   });
 
   btnClearSettings.addEventListener("click", () => {
     inputApiKey.value = "";
     localStorage.removeItem("gemini_api_key");
-    updateEngineStatus("Local Parser");
-    showToast("Settings Cleared", "Defaulted back to Local Parser.", "info");
+    const activeDoc = documentsList.find(d => d.id === activeDocId);
+    updateEngineStatus(activeDoc ? (activeDoc.engine_used || "Local Parser") : "Local Parser");
+    showToast("Settings Cleared", "API key removed from browser storage.", "info");
     closeSettings();
   });
 
@@ -185,6 +212,9 @@ async function fetchDocuments() {
     documentsList = await response.json();
     renderQueue();
     updateStats();
+    if (!activeDocId && documentsList.length > 0) {
+      selectDocument(documentsList[0].id);
+    }
   } catch (error) {
     showToast("Error", "Failed to retrieve documents queue.", "error");
   }
@@ -419,7 +449,7 @@ function renderDocumentVisual(doc) {
 
   if (doc.doc_type === "Invoice" && data && Object.keys(data).length > 0) {
     const curr = (data.currency || "USD").toUpperCase();
-    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
+    const currSym = getCurrencySymbol(curr);
     html = `
       <div class="space-y-1">
         <p class="text-[10px] text-slate-400 font-semibold">VENDOR</p>
@@ -440,22 +470,36 @@ function renderDocumentVisual(doc) {
         <div class="space-y-1.5">
           ${(data.line_items || []).map(item => `
             <div class="flex justify-between items-center text-[10px] bg-slate-950 p-1.5 rounded border border-slate-900">
-              <span class="text-slate-300 truncate max-w-[160px]">${item.description}</span>
-              <span class="text-slate-400 font-mono font-medium">${item.quantity} x ${currSym}${(item.price || 0).toFixed(2)}</span>
+              <span class="text-slate-300 truncate max-w-[140px]">${item.description}</span>
+              <span class="text-slate-400 font-mono font-medium">${item.quantity} × ${formatCurrencyAmount(item.price || 0, curr)} = <strong class="text-emerald-400">${formatCurrencyAmount(item.amount || 0, curr)}</strong></span>
             </div>
           `).join('')}
         </div>
       </div>
-      <div class="border-t border-slate-800 pt-2 mt-auto text-[10px]">
+      <div class="border-t border-slate-800 pt-2 mt-auto text-[10px] space-y-0.5">
+        <div class="flex justify-between items-center text-slate-400">
+          <span>SUBTOTAL</span>
+          <span class="font-mono">${formatCurrencyAmount(data.subtotal || 0, curr)}</span>
+        </div>
         ${(data.cgst !== undefined && data.cgst !== null) ? `
-          <div class="flex justify-between items-center text-slate-400 mb-0.5">
-            <span>CGST / SGST</span>
-            <span class="font-mono">${currSym}${(data.cgst || 0).toFixed(2)} + ${currSym}${(data.sgst || 0).toFixed(2)}</span>
+          <div class="flex justify-between items-center text-slate-400">
+            <span>CGST</span>
+            <span class="font-mono">${formatCurrencyAmount(data.cgst, curr)}</span>
           </div>
         ` : ''}
+        ${(data.sgst !== undefined && data.sgst !== null) ? `
+          <div class="flex justify-between items-center text-slate-400">
+            <span>SGST</span>
+            <span class="font-mono">${formatCurrencyAmount(data.sgst, curr)}</span>
+          </div>
+        ` : ''}
+        <div class="flex justify-between items-center text-slate-400">
+          <span>TOTAL TAX</span>
+          <span class="font-mono">${formatCurrencyAmount(data.tax || 0, curr)}</span>
+        </div>
         <div class="flex justify-between items-center text-xs pt-1 border-t border-slate-800/60">
-          <span class="text-slate-400 font-medium">TOTAL DUE</span>
-          <span class="text-sm font-bold text-emerald-400 font-mono">${currSym}${(data.total || 0).toFixed(2)}</span>
+          <span class="text-slate-400 font-medium">GRAND TOTAL</span>
+          <span class="text-sm font-bold text-emerald-400 font-mono">${formatCurrencyAmount(data.total || 0, curr)}</span>
         </div>
       </div>
     `;
@@ -596,7 +640,9 @@ function renderExtractionForm(doc) {
 
   if (doc.doc_type === "Invoice") {
     const curr = (data.currency || "USD").toUpperCase();
-    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
+    const currSym = getCurrencySymbol(curr);
+    const hasCgst = data.cgst !== undefined && data.cgst !== null;
+    const hasSgst = data.sgst !== undefined && data.sgst !== null;
     // Generate Invoice Form
     form.innerHTML = `
       <div class="grid grid-cols-2 gap-4">
@@ -614,7 +660,7 @@ function renderExtractionForm(doc) {
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Currency</label>
-          <input type="text" name="currency" value="${curr}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium shadow-sm focus:outline-none transition">
+          <input type="text" name="currency" value="${curr}" required oninput="refreshInvoiceCurrencyDisplays()" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 focus:ring-1 focus:ring-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium shadow-sm focus:outline-none transition">
         </div>
       </div>
 
@@ -634,8 +680,8 @@ function renderExtractionForm(doc) {
               <tr class="text-slate-400 border-b border-slate-750 font-semibold">
                 <th class="pb-2 w-[48%]">Description</th>
                 <th class="pb-2 text-center w-[14%]">Qty</th>
-                <th class="pb-2 text-right w-[16%]">Price (${currSym})</th>
-                <th class="pb-2 text-right w-[16%]">Amount (${currSym})</th>
+                <th class="pb-2 text-right w-[16%]" id="th-item-price">Price (${currSym})</th>
+                <th class="pb-2 text-right w-[16%]" id="th-item-amount">Amount (${currSym})</th>
                 <th class="pb-2 text-center w-[6%]"></th>
               </tr>
             </thead>
@@ -649,10 +695,10 @@ function renderExtractionForm(doc) {
                     <input type="number" step="any" value="${item.quantity || 0}" required class="item-qty w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-center rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
                   </td>
                   <td class="py-2 px-2 text-right">
-                    <input type="number" step="0.01" value="${item.price || 0}" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
+                    <input type="number" step="0.01" value="${Number(item.price || 0).toFixed(2)}" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
                   </td>
                   <td class="py-2 pl-2 text-right text-emerald-400 font-mono font-bold item-amount-val text-xs">
-                    ${currSym}${(item.amount || 0).toFixed(2)}
+                    ${formatCurrencyAmount(item.amount || 0, curr)}
                   </td>
                   <td class="py-2 text-center">
                     <button type="button" onclick="removeInvoiceItemRow(this)" class="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-500/10 rounded transition">
@@ -669,24 +715,39 @@ function renderExtractionForm(doc) {
       <!-- Financial Totals -->
       <div class="border-t border-slate-800 pt-4 grid grid-cols-2 md:grid-cols-3 gap-4">
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Subtotal (${currSym})</label>
-          <input type="number" step="0.01" name="subtotal" value="${data.subtotal || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="text-xs font-semibold text-slate-200 tracking-wide" id="lbl-subtotal-title">Subtotal (${currSym})</label>
+            <span class="text-xs font-mono text-slate-400" id="lbl-subtotal-formatted">${formatCurrencyAmount(data.subtotal || 0, curr)}</span>
+          </div>
+          <input type="number" step="0.01" name="subtotal" value="${Number(data.subtotal || 0).toFixed(2)}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Total Tax (${currSym})</label>
-          <input type="number" step="0.01" name="tax" value="${data.tax || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="text-xs font-semibold text-slate-200 tracking-wide" id="lbl-tax-title">Total Tax (${currSym})</label>
+            <span class="text-xs font-mono text-slate-400" id="lbl-tax-formatted">${formatCurrencyAmount(data.tax || 0, curr)}</span>
+          </div>
+          <input type="number" step="0.01" name="tax" value="${Number(data.tax || 0).toFixed(2)}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateInvoiceSummary()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Grand Total (${currSym})</label>
-          <input type="number" step="0.01" name="total" value="${data.total || 0}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-emerald-400 font-mono font-bold focus:outline-none transition">
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="text-xs font-semibold text-slate-200 tracking-wide" id="lbl-total-title">Grand Total (${currSym})</label>
+            <span class="text-xs font-mono font-bold text-emerald-400" id="lbl-total-formatted">${formatCurrencyAmount(data.total || 0, curr)}</span>
+          </div>
+          <input type="number" step="0.01" name="total" value="${Number(data.total || 0).toFixed(2)}" required class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-emerald-400 font-mono font-bold focus:outline-none transition" oninput="refreshInvoiceCurrencyDisplays()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">CGST (${currSym})</label>
-          <input type="number" step="0.01" name="cgst" value="${data.cgst !== undefined && data.cgst !== null ? data.cgst : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="text-xs font-semibold text-slate-200 tracking-wide" id="lbl-cgst-title">CGST (${currSym})</label>
+            <span class="text-xs font-mono text-slate-400" id="lbl-cgst-formatted">${hasCgst ? formatCurrencyAmount(data.cgst, curr) : '—'}</span>
+          </div>
+          <input type="number" step="0.01" name="cgst" value="${hasCgst ? Number(data.cgst).toFixed(2) : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">SGST (${currSym})</label>
-          <input type="number" step="0.01" name="sgst" value="${data.sgst !== undefined && data.sgst !== null ? data.sgst : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
+          <div class="flex justify-between items-center mb-1.5">
+            <label class="text-xs font-semibold text-slate-200 tracking-wide" id="lbl-sgst-title">SGST (${currSym})</label>
+            <span class="text-xs font-mono text-slate-400" id="lbl-sgst-formatted">${hasSgst ? formatCurrencyAmount(data.sgst, curr) : '—'}</span>
+          </div>
+          <input type="number" step="0.01" name="sgst" value="${hasSgst ? Number(data.sgst).toFixed(2) : ''}" placeholder="Optional" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-mono font-medium focus:outline-none transition" oninput="recalculateTaxesFromBreakdown()">
         </div>
         <div>
           <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Payment Due Date</label>
@@ -778,7 +839,7 @@ function renderExtractionForm(doc) {
     `;
   } else if (doc.doc_type === "Contract") {
     const curr = (data.currency || "USD").toUpperCase();
-    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
+    const currSym = getCurrencySymbol(curr);
     // Generate Contract Form
     form.innerHTML = `
       <div class="grid grid-cols-2 gap-4">
@@ -877,6 +938,7 @@ window.addInvoiceItemRow = function() {
   const tbody = document.getElementById("invoice-items-tbody");
   const tr = document.createElement("tr");
   tr.className = "item-row";
+  const curr = (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "USD");
   tr.innerHTML = `
     <td class="py-2 pr-2">
       <input type="text" value="" required class="item-desc w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 rounded-md px-2.5 py-1.5 text-xs text-white font-medium focus:outline-none transition">
@@ -888,7 +950,7 @@ window.addInvoiceItemRow = function() {
       <input type="number" step="0.01" value="0.00" required class="item-price w-full bg-slate-900 border border-slate-700/90 hover:border-slate-500 focus:border-indigo-400 text-right rounded-md px-2 py-1.5 text-xs text-white font-medium focus:outline-none transition" oninput="calculateItemRowAmount(this)">
     </td>
     <td class="py-2 pl-2 text-right text-emerald-400 font-mono font-bold item-amount-val text-xs">
-      ${(document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "INR" ? "₹" : (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "EUR" ? "€" : (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "") === "GBP" ? "£" : "$"}0.00
+      ${formatCurrencyAmount(0, curr)}
     </td>
     <td class="py-2 text-center">
       <button type="button" onclick="removeInvoiceItemRow(this)" class="text-rose-400 hover:text-rose-300 p-1 hover:bg-rose-500/10 rounded transition">
@@ -910,9 +972,8 @@ window.calculateItemRowAmount = function(input) {
   const qty = parseFloat(row.querySelector(".item-qty").value) || 0;
   const price = parseFloat(row.querySelector(".item-price").value) || 0;
   const amount = qty * price;
-  const curr = (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "");
-  const sym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
-  row.querySelector(".item-amount-val").innerText = `${sym}${amount.toFixed(2)}`;
+  const curr = (document.getElementsByName("currency")[0] ? document.getElementsByName("currency")[0].value.trim().toUpperCase() : "USD");
+  row.querySelector(".item-amount-val").innerText = formatCurrencyAmount(amount, curr);
   recalculateInvoiceSummary();
 };
 
@@ -946,6 +1007,55 @@ window.recalculateInvoiceSummary = function() {
   
   const tax = parseFloat(taxRateInput ? taxRateInput.value : 0) || 0;
   if (totalInput) totalInput.value = (subtotal + tax).toFixed(2);
+  refreshInvoiceCurrencyDisplays();
+};
+
+window.refreshInvoiceCurrencyDisplays = function() {
+  const currInput = document.getElementsByName("currency")[0];
+  const curr = currInput ? currInput.value.trim().toUpperCase() : "USD";
+  const sym = getCurrencySymbol(curr);
+
+  const thPrice = document.getElementById("th-item-price");
+  const thAmount = document.getElementById("th-item-amount");
+  if (thPrice) thPrice.innerText = `Price (${sym})`;
+  if (thAmount) thAmount.innerText = `Amount (${sym})`;
+
+  const titles = [
+    ["lbl-subtotal-title", "Subtotal"],
+    ["lbl-tax-title", "Total Tax"],
+    ["lbl-total-title", "Grand Total"],
+    ["lbl-cgst-title", "CGST"],
+    ["lbl-sgst-title", "SGST"]
+  ];
+  titles.forEach(([id, label]) => {
+    const el = document.getElementById(id);
+    if (el) el.innerText = `${label} (${sym})`;
+  });
+
+  document.querySelectorAll("#invoice-items-tbody .item-row").forEach(row => {
+    const qty = parseFloat(row.querySelector(".item-qty").value) || 0;
+    const price = parseFloat(row.querySelector(".item-price").value) || 0;
+    const amtEl = row.querySelector(".item-amount-val");
+    if (amtEl) amtEl.innerText = formatCurrencyAmount(qty * price, curr);
+  });
+
+  const subVal = parseFloat(document.getElementsByName("subtotal")[0]?.value) || 0;
+  const taxVal = parseFloat(document.getElementsByName("tax")[0]?.value) || 0;
+  const totVal = parseFloat(document.getElementsByName("total")[0]?.value) || 0;
+  const cgstRaw = document.getElementsByName("cgst")[0]?.value;
+  const sgstRaw = document.getElementsByName("sgst")[0]?.value;
+
+  const subFmt = document.getElementById("lbl-subtotal-formatted");
+  const taxFmt = document.getElementById("lbl-tax-formatted");
+  const totFmt = document.getElementById("lbl-total-formatted");
+  const cgstFmt = document.getElementById("lbl-cgst-formatted");
+  const sgstFmt = document.getElementById("lbl-sgst-formatted");
+
+  if (subFmt) subFmt.innerText = formatCurrencyAmount(subVal, curr);
+  if (taxFmt) taxFmt.innerText = formatCurrencyAmount(taxVal, curr);
+  if (totFmt) totFmt.innerText = formatCurrencyAmount(totVal, curr);
+  if (cgstFmt) cgstFmt.innerText = (cgstRaw !== undefined && cgstRaw !== "") ? formatCurrencyAmount(parseFloat(cgstRaw) || 0, curr) : "—";
+  if (sgstFmt) sgstFmt.innerText = (sgstRaw !== undefined && sgstRaw !== "") ? formatCurrencyAmount(parseFloat(sgstRaw) || 0, curr) : "—";
 };
 
 // Delivery Note Row functions

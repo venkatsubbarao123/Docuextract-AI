@@ -443,6 +443,78 @@ Grand Total: 5,540.40
                 self.assertEqual(ext_data["extracted_data"]["invoice_number"], "FAIL-FALLBACK-01")
                 self.assertEqual(ext_data["extracted_data"]["total"], 220.0)
 
+    def test_28_multiline_pdf_nsm_26_2087_and_ui_currency_tax_labels(self):
+        """Verify multi-line PDF cell layout (NSM-26-2087 / NORTHSTAR OFFICE MART) extracts all 3 line items, CGST 385.20, SGST 385.20, Tax 770.40, and Grand Total 5,540.40."""
+        raw_multiline_pdf_text = """NORTHSTAR OFFICE MART
+Fictional supplier   42 Lakeview Road, Pune, Maharashtra 411001, India
+GSTIN: 27ABCDE1234F1Z5 | Email: billing@northstar-example.test
+ TAX INVOICE
+ Invoice Number
+NSM-26-2087
+Invoice Date
+10-Oct-2026
+Due Date
+09-Nov-2026
+Currency
+INR (■)
+Purchase Order
+PO-IND-7742
+Payment Terms
+Net 30
+Bill To
+Riverbend Analytics Pvt. Ltd.
+Line Items
+SKU
+Description
+Qty
+Unit Price
+Tax Rate
+Amount
+PPR-A4-500
+A4 copier paper (500 sheets)
+12
+■ 275.00
+18%
+■ 3,300.00
+PEN-BLU-10
+Blue ballpoint pens (pack of 10)
+6
+■ 95.00
+12%
+■ 570.00
+NOTE-A5-3
+A5 ruled notebooks (pack of 3)
+5
+■ 180.00
+12%
+■ 900.00
+Subtotal
+■ 4,770.00
+CGST
+■ 385.20
+SGST
+■ 385.20
+Grand Total
+■ 5,540.40
+""".encode("utf-8")
+        res = run_document_extraction(None, "DocuExtract_AI_Test_Invoice_02.pdf", "application/pdf", raw_multiline_pdf_text)
+        self.assertEqual(res.engine_used, "Local Parser")
+        self.assertEqual(res.doc_type, "Invoice")
+        data = res.extracted_data
+        self.assertEqual(data["invoice_number"], "NSM-26-2087")
+        self.assertEqual(data["vendor_name"], "NORTHSTAR OFFICE MART")
+        self.assertEqual(data["buyer_name"], "Riverbend Analytics Pvt. Ltd.")
+        self.assertEqual(data["currency"], "INR")
+        self.assertEqual(len(data["line_items"]), 3)
+        self.assertEqual(data["line_items"][0]["amount"], 3300.0)
+        self.assertEqual(data["line_items"][1]["amount"], 570.0)
+        self.assertEqual(data["line_items"][2]["amount"], 900.0)
+        self.assertEqual(data["subtotal"], 4770.0)
+        self.assertEqual(data["cgst"], 385.2)
+        self.assertEqual(data["sgst"], 385.2)
+        self.assertEqual(data["tax"], 770.4)
+        self.assertEqual(data["total"], 5540.4)
+
 
 if __name__ == "__main__":
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDocuExtractComprehensive)
