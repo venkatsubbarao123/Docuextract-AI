@@ -381,9 +381,22 @@ function renderDocumentVisual(doc) {
   const visualBody = document.getElementById("visual-body");
   const visualSmudge = document.getElementById("visual-smudge");
   const previewFileType = document.getElementById("preview-file-type");
+  const previewEngineBadge = document.getElementById("preview-engine-badge");
   
   visualDocId.innerText = `ID: ${doc.id}`;
   visualTitle.innerText = doc.doc_type.toUpperCase();
+
+  if (previewEngineBadge) {
+    const eng = doc.engine_used || "Local Parser";
+    previewEngineBadge.innerText = eng;
+    if (eng === "Gemini AI") {
+      previewEngineBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold border text-emerald-400 bg-emerald-500/10 border-emerald-500/20";
+    } else if (eng === "Mock Mode") {
+      previewEngineBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold border text-slate-400 bg-slate-800 border-slate-700";
+    } else {
+      previewEngineBadge.className = "text-[10px] px-2 py-0.5 rounded-full font-mono font-semibold border text-amber-400 bg-amber-500/10 border-amber-500/20";
+    }
+  }
 
   // Reset visual blurry blur effects
   visualSmudge.classList.add("hidden");

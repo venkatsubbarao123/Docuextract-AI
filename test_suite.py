@@ -344,6 +344,55 @@ Grand Total: 5,540.40
         self.assertEqual(matching[0]["status"], "Verified")
         self.assertEqual(matching[0]["extracted_data"]["total"], 5540.40)
 
+    def test_26_all_three_engine_states_and_frontend_integrity(self):
+        """Test all three engine states ('Mock Mode', 'Local Parser', 'Gemini AI') and verify single updateEngineStatus definition in app.js."""
+        from unittest.mock import patch
+
+        # 1. Mock Mode (canned sample fixture)
+        mock_res = get_mock_extraction("invoice_standard.pdf")
+        self.assertEqual(mock_res.engine_used, "Mock Mode")
+
+        # 2. Local Parser (real document without Gemini or when Gemini fails)
+        raw_inv = b"INVOICE\nInvoice Number: LP-100\nVendor: Local Corp\nSubtotal: 100.00\nTax: 10.00\nTotal: 110.00"
+        lp_res = run_document_extraction(None, "local_invoice.pdf", "application/pdf", raw_inv)
+        self.assertEqual(lp_res.engine_used, "Local Parser")
+
+        # 3. Gemini AI (when Gemini API call succeeds and returns valid JSON)
+        fake_gemini_classify = {"candidates": [{"content": {"parts": [{"text": "Invoice"}]}}]}
+        fake_gemini_extract = {
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": json.dumps({
+                            "invoice_number": "GEM-2026-01",
+                            "invoice_date": "2026-10-11",
+                            "vendor_name": "Gemini Cloud Services",
+                            "currency": "USD",
+                            "line_items": [{"description": "AI Compute", "quantity": 1, "price": 500.0, "amount": 500.0}],
+                            "subtotal": 500.0,
+                            "tax": 50.0,
+                            "cgst": None,
+                            "sgst": None,
+                            "total": 550.0
+                        })
+                    }]
+                }
+            }]
+        }
+        with patch("app.extractor.call_gemini_api", side_effect=[fake_gemini_classify, fake_gemini_extract]):
+            gem_res = run_document_extraction("valid-key", "gemini_invoice.pdf", "application/pdf", raw_inv)
+            self.assertEqual(gem_res.engine_used, "Gemini AI")
+            self.assertEqual(gem_res.extracted_data["invoice_number"], "GEM-2026-01")
+
+        # 4. Verify frontend app.js has exactly one definition of updateEngineStatus and no "Server Gemini AI Active"
+        with open("app/static/app.js", "r", encoding="utf-8") as f:
+            js_code = f.read()
+        self.assertEqual(js_code.count("function updateEngineStatus"), 1)
+        self.assertNotIn("Server Gemini AI Active", js_code)
+        self.assertNotIn("Client Key Active", js_code)
+        self.assertIn("preview-engine-badge", js_code)
+        self.assertIn("badge-engine-used", js_code)
+
 
 if __name__ == "__main__":
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDocuExtractComprehensive)

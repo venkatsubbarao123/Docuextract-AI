@@ -216,7 +216,7 @@ async def health_check():
         "status": "healthy",
         "gemini_api_configured": has_api_key,
         "database": "sqlite_ready",
-        "engine": "Gemini Live Vision AI" if has_api_key else "Deterministic OCR Parser"
+        "default_engine": "Local Parser"
     }
 
 @app.get("/api/config")
@@ -225,7 +225,7 @@ async def get_config():
     has_api_key = bool(os.getenv("GEMINI_API_KEY", "").strip())
     return {
         "has_server_api_key": has_api_key,
-        "engine": "Gemini Multimodal AI" if has_api_key else "Deterministic OCR Parser"
+        "default_engine": "Local Parser"
     }
 
 @app.post("/api/extract", response_model=ExtractionResponse)
