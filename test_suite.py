@@ -1,4 +1,5 @@
 import unittest
+import os
 import io
 import json
 from fastapi.testclient import TestClient
@@ -307,14 +308,17 @@ SGST (6%): 385.20
 Total Tax: 770.40
 Grand Total: 5,540.40
 """
-        # 1. Upload via /api/extract
-        up_res = client.post(
-            "/api/extract",
-            files={"file": ("NSM-26-2087.pdf", io.BytesIO(raw_inv), "application/pdf")}
-        )
+        # 1. Upload via /api/extract (with deterministic Local Parser)
+        from unittest.mock import patch
+        with patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            up_res = client.post(
+                "/api/extract",
+                files={"file": ("NSM-26-2087.pdf", io.BytesIO(raw_inv), "application/pdf")}
+            )
         self.assertEqual(up_res.status_code, 200)
         uploaded_doc = up_res.json()
         doc_id = uploaded_doc["id"]
+        self.assertEqual(uploaded_doc["engine_used"], "Local Parser")
         self.assertEqual(uploaded_doc["extracted_data"]["invoice_number"], "NSM-26-2087")
         self.assertEqual(uploaded_doc["extracted_data"]["cgst"], 385.20)
         self.assertEqual(uploaded_doc["extracted_data"]["sgst"], 385.20)
@@ -325,6 +329,7 @@ Grand Total: 5,540.40
         get_res = client.get(f"/api/documents/{doc_id}")
         self.assertEqual(get_res.status_code, 200)
         self.assertEqual(get_res.json()["id"], doc_id)
+        self.assertEqual(get_res.json()["engine_used"], "Local Parser")
 
         # 3. Edit and Approve via /api/documents/{id}/verify
         edited_payload = dict(uploaded_doc["extracted_data"])
@@ -335,6 +340,7 @@ Grand Total: 5,540.40
         self.assertEqual(verified_doc["status"], "Verified")
         self.assertFalse(verified_doc["review_required"])
         self.assertEqual(verified_doc["extracted_data"]["due_date"], "12-Sep-2026")
+        self.assertEqual(verified_doc["engine_used"], "Local Parser")
 
         # 4. Refresh queue list via /api/documents and confirm persisted state
         list_res = client.get("/api/documents")
@@ -343,6 +349,7 @@ Grand Total: 5,540.40
         self.assertEqual(len(matching), 1)
         self.assertEqual(matching[0]["status"], "Verified")
         self.assertEqual(matching[0]["extracted_data"]["total"], 5540.40)
+        self.assertEqual(matching[0]["engine_used"], "Local Parser")
 
     def test_26_all_three_engine_states_and_frontend_integrity(self):
         """Test all three engine states ('Mock Mode', 'Local Parser', 'Gemini AI') and verify single updateEngineStatus definition in app.js."""
@@ -352,7 +359,7 @@ Grand Total: 5,540.40
         mock_res = get_mock_extraction("invoice_standard.pdf")
         self.assertEqual(mock_res.engine_used, "Mock Mode")
 
-        # 2. Local Parser (real document without Gemini or when Gemini fails)
+        # 2. Local Parser (real document without Gemini key)
         raw_inv = b"INVOICE\nInvoice Number: LP-100\nVendor: Local Corp\nSubtotal: 100.00\nTax: 10.00\nTotal: 110.00"
         lp_res = run_document_extraction(None, "local_invoice.pdf", "application/pdf", raw_inv)
         self.assertEqual(lp_res.engine_used, "Local Parser")
@@ -392,6 +399,49 @@ Grand Total: 5,540.40
         self.assertNotIn("Client Key Active", js_code)
         self.assertIn("preview-engine-badge", js_code)
         self.assertIn("badge-engine-used", js_code)
+
+    def test_27_api_key_exists_but_gemini_fails_and_health_config_check(self):
+        """Verify /health and /api/config do not claim Gemini was used, and verify API-key-present + Gemini failure falls back to Local Parser."""
+        from unittest.mock import patch
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client = TestClient(app)
+
+        # 1. Verify /health and /api/config when GEMINI_API_KEY is configured
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "configured-but-untested-key"}):
+            health_res = client.get("/health")
+            self.assertEqual(health_res.status_code, 200)
+            h_data = health_res.json()
+            self.assertTrue(h_data["gemini_api_configured"])
+            self.assertEqual(h_data["default_engine"], "Local Parser")
+            self.assertNotIn("Gemini Live Vision AI", json.dumps(h_data))
+            self.assertNotIn("Gemini Multimodal AI", json.dumps(h_data))
+
+            cfg_res = client.get("/api/config")
+            self.assertEqual(cfg_res.status_code, 200)
+            c_data = cfg_res.json()
+            self.assertTrue(c_data["has_server_api_key"])
+            self.assertEqual(c_data["default_engine"], "Local Parser")
+            self.assertNotIn("Gemini Live Vision AI", json.dumps(c_data))
+            self.assertNotIn("Gemini Multimodal AI", json.dumps(c_data))
+
+            # 2. Verify /api/extract when API key exists, but Gemini API fails (e.g., HTTP 429 or 400)
+            raw_inv = b"INVOICE\nInvoice Number: FAIL-FALLBACK-01\nVendor: Resilient Vendor\nCurrency: USD\nSubtotal: 200.00\nTax: 20.00\nTotal: 220.00"
+            with patch("app.extractor.call_gemini_api", side_effect=Exception("Gemini API Error (HTTP 429): Quota exceeded")):
+                ext_res = client.post(
+                    "/api/extract",
+                    files={"file": ("fallback_test.pdf", io.BytesIO(raw_inv), "application/pdf")},
+                    data={"api_key": "configured-but-failing-key"}
+                )
+                self.assertEqual(ext_res.status_code, 200)
+                ext_data = ext_res.json()
+                # Must report Local Parser, NOT Gemini AI!
+                self.assertEqual(ext_data["engine_used"], "Local Parser")
+                self.assertTrue(ext_data["review_required"])
+                self.assertTrue(any("Gemini AI unavailable" in r for r in ext_data["review_reasons"]))
+                self.assertEqual(ext_data["extracted_data"]["invoice_number"], "FAIL-FALLBACK-01")
+                self.assertEqual(ext_data["extracted_data"]["total"], 220.0)
 
 
 if __name__ == "__main__":
