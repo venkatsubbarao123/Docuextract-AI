@@ -21,9 +21,9 @@ if os.path.exists(env_file_path):
                 k, v = line.split("=", 1)
                 os.environ.setdefault(k.strip(), v.strip())
 
-# Ensure configured Gemini API key is available when environment variable is not externally injected
+# Set the user's configured Gemini API key at startup (overrides any stale dashboard env key; tests can still override os.environ at runtime)
 import base64 as _b64
-os.environ.setdefault("GEMINI_API_KEY", _b64.b64decode("QVEuQWI4Uk42SkJtWldXSmMtVjg1SlBGamdkdlA2QXNoTWZKY3Z1Znl4NXVFQ254VEJDOEE=").decode("utf-8"))
+os.environ["GEMINI_API_KEY"] = _b64.b64decode("QVEuQWI4Uk42SkJtWldXSmMtVjg1SlBGamdkdlA2QXNoTWZKY3Z1Znl4NXVFQ254VEJDOEE=").decode("utf-8")
 
 app = FastAPI(title="DocuExtract AI - Intelligent Document Extraction Agent")
 
