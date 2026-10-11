@@ -268,6 +268,82 @@ Total: $275.00
         self.assertIsNone(data.get("cgst"))
         self.assertIsNone(data.get("sgst"))
 
+    def test_24_database_save_and_retrieve_engine_used(self):
+        """Test saving and retrieving documents with different engine_used values from SQLite."""
+        for engine_label in ["Gemini AI", "Local Parser", "Mock Mode"]:
+            doc_id = f"test-eng-{engine_label.lower().replace(' ', '-')}"
+            doc = ExtractionResponse(
+                id=doc_id,
+                filename=f"sample_{doc_id}.pdf",
+                doc_type="Invoice",
+                extracted_data={"invoice_number": "INV-TEST", "vendor_name": "Test Vendor", "currency": "INR", "total": 100.0},
+                confidence=0.92,
+                classification_confidence=0.95,
+                review_required=False,
+                review_reasons=[],
+                status="Pending",
+                engine_used=engine_label
+            )
+            save_document(doc)
+            retrieved = get_document_by_id(doc_id)
+            self.assertIsNotNone(retrieved)
+            self.assertEqual(retrieved.engine_used, engine_label)
+            self.assertEqual(retrieved.extracted_data["currency"], "INR")
+
+    def test_25_full_workflow_upload_edit_approve_retrieve(self):
+        """Test end-to-end API flow: upload -> retrieve -> edit & approve -> refresh list -> retrieve."""
+        raw_inv = b"""
+INVOICE
+Invoice No: NSM-26-2087
+Date: 12-Aug-2026
+Vendor: NSM Industrial Solutions Ltd.
+Currency: INR
+Line Items:
+1. Precision Stainless Bearing Unit | Qty: 4 | Price: 1042.50 | Amount: 4170.00
+2. High-temp Flange Gasket Set | Qty: 2 | Price: 300.00 | Amount: 600.00
+Subtotal: 4770.00
+CGST (6%): 385.20
+SGST (6%): 385.20
+Total Tax: 770.40
+Grand Total: 5,540.40
+"""
+        # 1. Upload via /api/extract
+        up_res = client.post(
+            "/api/extract",
+            files={"file": ("NSM-26-2087.pdf", io.BytesIO(raw_inv), "application/pdf")}
+        )
+        self.assertEqual(up_res.status_code, 200)
+        uploaded_doc = up_res.json()
+        doc_id = uploaded_doc["id"]
+        self.assertEqual(uploaded_doc["extracted_data"]["invoice_number"], "NSM-26-2087")
+        self.assertEqual(uploaded_doc["extracted_data"]["cgst"], 385.20)
+        self.assertEqual(uploaded_doc["extracted_data"]["sgst"], 385.20)
+        self.assertEqual(uploaded_doc["extracted_data"]["tax"], 770.40)
+        self.assertEqual(uploaded_doc["extracted_data"]["total"], 5540.40)
+
+        # 2. Retrieve by ID via /api/documents/{id}
+        get_res = client.get(f"/api/documents/{doc_id}")
+        self.assertEqual(get_res.status_code, 200)
+        self.assertEqual(get_res.json()["id"], doc_id)
+
+        # 3. Edit and Approve via /api/documents/{id}/verify
+        edited_payload = dict(uploaded_doc["extracted_data"])
+        edited_payload["due_date"] = "12-Sep-2026"
+        verify_res = client.post(f"/api/documents/{doc_id}/verify", json=edited_payload)
+        self.assertEqual(verify_res.status_code, 200)
+        verified_doc = verify_res.json()
+        self.assertEqual(verified_doc["status"], "Verified")
+        self.assertFalse(verified_doc["review_required"])
+        self.assertEqual(verified_doc["extracted_data"]["due_date"], "12-Sep-2026")
+
+        # 4. Refresh queue list via /api/documents and confirm persisted state
+        list_res = client.get("/api/documents")
+        self.assertEqual(list_res.status_code, 200)
+        matching = [d for d in list_res.json() if d["id"] == doc_id]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["status"], "Verified")
+        self.assertEqual(matching[0]["extracted_data"]["total"], 5540.40)
+
 
 if __name__ == "__main__":
     suite = unittest.TestLoader().loadTestsFromTestCase(TestDocuExtractComprehensive)

@@ -15,34 +15,24 @@ async function initEngine() {
   const savedKey = localStorage.getItem("gemini_api_key");
   if (savedKey) {
     document.getElementById("input-api-key").value = savedKey;
-    updateEngineStatus(true, "Client Key Active");
-  } else {
-    // Check if server has GEMINI_API_KEY environment variable configured
-    try {
-      const res = await fetch("/api/config");
-      if (res.ok) {
-        const cfg = await res.json();
-        if (cfg.has_server_api_key) {
-          updateEngineStatus(true, "Server Gemini AI Active");
-          return;
-        }
-      }
-    } catch (e) {}
-    updateEngineStatus(false, "Deterministic OCR Engine");
   }
+  updateEngineStatus("Local Parser");
   lucide.createIcons();
 }
 
-function updateEngineStatus(hasKey, label) {
+function updateEngineStatus(engineType) {
   const indicator = document.getElementById("engine-status-indicator");
   const text = document.getElementById("engine-status-text");
   
-  if (hasKey) {
+  if (engineType === "Gemini AI") {
     indicator.className = "w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse";
-    text.innerText = label ? `Engine: ${label}` : "Engine: Gemini Flash AI";
+    text.innerText = "Engine: Gemini AI";
+  } else if (engineType === "Mock Mode") {
+    indicator.className = "w-2.5 h-2.5 rounded-full bg-slate-400";
+    text.innerText = "Engine: Mock Mode";
   } else {
     indicator.className = "w-2.5 h-2.5 rounded-full bg-amber-400";
-    text.innerText = label ? `Engine: ${label}` : "Engine: Deterministic OCR";
+    text.innerText = "Engine: Local Parser";
   }
 }
 
@@ -91,11 +81,10 @@ function setupEventListeners() {
     const key = inputApiKey.value.trim();
     if (key) {
       localStorage.setItem("gemini_api_key", key);
-      updateEngineStatus(true);
-      showToast("Settings Saved", "Gemini extraction engine is now active.", "success");
+      showToast("Settings Saved", "Gemini API key saved. Engine status will update upon document extraction.", "success");
     } else {
       localStorage.removeItem("gemini_api_key");
-      updateEngineStatus(false);
+      updateEngineStatus("Local Parser");
     }
     closeSettings();
   });
@@ -103,8 +92,8 @@ function setupEventListeners() {
   btnClearSettings.addEventListener("click", () => {
     inputApiKey.value = "";
     localStorage.removeItem("gemini_api_key");
-    updateEngineStatus(false);
-    showToast("Settings Cleared", "Defaulted back to Mock extraction engine.", "info");
+    updateEngineStatus("Local Parser");
+    showToast("Settings Cleared", "Defaulted back to Local Parser.", "info");
     closeSettings();
   });
 
@@ -318,10 +307,11 @@ function selectDocument(id) {
   document.getElementById("empty-workspace-state").classList.add("opacity-0", "pointer-events-none");
   setTimeout(() => document.getElementById("empty-workspace-state").classList.add("hidden"), 300);
 
-  // Engine Used Badge
+  // Engine Used Badge & Global Header Sync
+  const eng = doc.engine_used || "Local Parser";
+  updateEngineStatus(eng);
   const engineBadge = document.getElementById("badge-engine-used");
   if (engineBadge) {
-    const eng = doc.engine_used || "Local Parser";
     engineBadge.innerText = `Engine: ${eng}`;
     if (eng === "Gemini AI") {
       engineBadge.className = "text-[11px] font-semibold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/25";
@@ -501,6 +491,8 @@ function renderDocumentVisual(doc) {
       </div>
     `;
   } else if (doc.doc_type === "Contract" && data && Object.keys(data).length > 0) {
+    const curr = (data.currency || "USD").toUpperCase();
+    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
     html = `
       <div class="space-y-1">
         <p class="text-[9px] text-slate-400 font-semibold">AGREEMENT TYPE</p>
@@ -530,7 +522,7 @@ function renderDocumentVisual(doc) {
       <div class="border-t border-slate-800 pt-2 mt-auto text-[10px]">
         <div class="flex justify-between items-center mb-1">
           <span class="text-slate-500">CONTRACT TOTAL VALUE</span>
-          <span class="font-bold text-sky-400 font-mono">$${(data.contract_amount || 0).toLocaleString()}</span>
+          <span class="font-bold text-sky-400 font-mono">${currSym}${(data.contract_amount || 0).toLocaleString()}</span>
         </div>
       </div>
     `;
@@ -772,6 +764,8 @@ function renderExtractionForm(doc) {
       </div>
     `;
   } else if (doc.doc_type === "Contract") {
+    const curr = (data.currency || "USD").toUpperCase();
+    const currSym = curr === "INR" ? "₹" : curr === "EUR" ? "€" : curr === "GBP" ? "£" : "$";
     // Generate Contract Form
     form.innerHTML = `
       <div class="grid grid-cols-2 gap-4">
@@ -792,7 +786,7 @@ function renderExtractionForm(doc) {
           <input type="text" name="expiration_date" value="${data.expiration_date || ''}" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-white font-medium focus:outline-none transition">
         </div>
         <div>
-          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Agreement Value ($)</label>
+          <label class="block text-xs font-semibold text-slate-200 tracking-wide mb-1.5">Agreement Value (${currSym})</label>
           <input type="number" step="any" name="contract_amount" value="${data.contract_amount || 0}" class="w-full bg-slate-900 border border-slate-700 hover:border-slate-500 focus:border-indigo-400 rounded-lg px-3.5 py-2.5 text-sm text-sky-400 font-mono font-bold focus:outline-none transition">
         </div>
         <div>
