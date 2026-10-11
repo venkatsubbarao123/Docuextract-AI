@@ -5,10 +5,44 @@ let currentChart = null;
 
 // Initialize Elements on Load
 document.addEventListener("DOMContentLoaded", () => {
+  initTheme();
   initEngine();
   fetchDocuments();
   setupEventListeners();
 });
+
+function initTheme() {
+  const savedTheme = localStorage.getItem("docuextract_theme") || "dark";
+  applyTheme(savedTheme);
+}
+
+function applyTheme(theme) {
+  const root = document.documentElement;
+  const label = document.getElementById("theme-toggle-label");
+  const btn = document.getElementById("btn-theme-toggle");
+  if (theme === "light") {
+    root.classList.add("theme-light");
+    if (label) label.innerText = "Dark Theme";
+    if (btn) {
+      const iconEl = btn.querySelector("i, svg");
+      if (iconEl) {
+        iconEl.outerHTML = '<i id="theme-toggle-icon" data-lucide="moon" class="w-4 h-4 text-slate-600"></i>';
+      }
+    }
+  } else {
+    root.classList.remove("theme-light");
+    if (label) label.innerText = "White Theme";
+    if (btn) {
+      const iconEl = btn.querySelector("i, svg");
+      if (iconEl) {
+        iconEl.outerHTML = '<i id="theme-toggle-icon" data-lucide="sun" class="w-4 h-4 text-amber-400"></i>';
+      }
+    }
+  }
+  if (typeof lucide !== "undefined") {
+    lucide.createIcons();
+  }
+}
 
 function getCurrencySymbol(curr) {
   const c = (curr || "USD").toString().trim().toUpperCase();
@@ -62,6 +96,17 @@ function updateEngineStatus(engineType) {
 
 // Event Listeners Setup
 function setupEventListeners() {
+  // Theme Toggle Controls
+  const btnThemeToggle = document.getElementById("btn-theme-toggle");
+  if (btnThemeToggle) {
+    btnThemeToggle.addEventListener("click", () => {
+      const isLight = document.documentElement.classList.contains("theme-light");
+      const nextTheme = isLight ? "dark" : "light";
+      localStorage.setItem("docuextract_theme", nextTheme);
+      applyTheme(nextTheme);
+    });
+  }
+
   // Settings Modal Controls
   const btnSettings = document.getElementById("btn-settings");
   const modalSettings = document.getElementById("modal-settings");

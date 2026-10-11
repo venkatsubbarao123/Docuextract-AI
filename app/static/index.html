@@ -25,7 +25,7 @@
     }
   </script>
   <!-- Custom Styles CSS -->
-  <link rel="stylesheet" href="/static/styles.css?v=20261011-4">
+  <link rel="stylesheet" href="/static/styles.css?v=20261011-5">
   <!-- Lucide Icons (UMD) -->
   <script src="https://unpkg.com/lucide@latest"></script>
   <!-- Chart.js CDN -->
@@ -47,12 +47,18 @@
       </div>
     </div>
 
-    <div class="flex items-center space-x-4">
+    <div class="flex items-center space-x-3">
       <!-- Engine Indicator -->
       <div class="flex items-center space-x-2 bg-slate-950 px-3 py-1.5 rounded-lg border border-slate-800">
         <div id="engine-status-indicator" class="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
         <span id="engine-status-text" class="text-xs font-medium text-slate-300">Engine: Local Parser</span>
       </div>
+
+      <!-- Theme Toggle (Dark / White Theme) -->
+      <button id="btn-theme-toggle" title="Switch between Dark and White Theme" class="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700 hover:border-slate-600 flex items-center space-x-1.5 text-xs font-semibold">
+        <i id="theme-toggle-icon" data-lucide="sun" class="w-4 h-4 text-amber-400"></i>
+        <span id="theme-toggle-label">White Theme</span>
+      </button>
 
       <!-- Settings Trigger -->
       <button id="btn-settings" class="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg transition duration-200 border border-slate-700 hover:border-slate-600 relative">
@@ -422,6 +428,6 @@
   </div>
 
   <!-- App Javascript -->
-  <script src="/static/app.js?v=20261011-4"></script>
+  <script src="/static/app.js?v=20261011-5"></script>
 </body>
 </html>

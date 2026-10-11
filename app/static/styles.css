@@ -14,6 +14,16 @@
   background: rgb(76 29 149); /* brand accent */
 }
 
+html.theme-light ::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+html.theme-light ::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+}
+html.theme-light ::-webkit-scrollbar-thumb:hover {
+  background: #7c3aed;
+}
+
 /* Animations */
 @keyframes laser-scan {
   0%, 100% {
@@ -95,4 +105,174 @@
   100% {
     transform: translateX(100%);
   }
+}
+
+/* =========================================================
+   White / Light Theme Overrides (html.theme-light)
+   ========================================================= */
+html.theme-light,
+html.theme-light body {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+}
+
+/* Primary Surfaces & Backgrounds */
+html.theme-light .bg-slate-950 {
+  background-color: #f8fafc !important;
+}
+
+html.theme-light header.bg-slate-900,
+html.theme-light .bg-slate-900,
+html.theme-light .bg-slate-900\/80,
+html.theme-light .bg-slate-900\/90,
+html.theme-light .bg-slate-950\/80 {
+  background-color: #ffffff !important;
+}
+
+html.theme-light .bg-slate-900\/50,
+html.theme-light .bg-slate-900\/40,
+html.theme-light .bg-slate-900\/30,
+html.theme-light .bg-slate-900\/20,
+html.theme-light .bg-slate-900\/10 {
+  background-color: #f1f5f9 !important;
+}
+
+html.theme-light #scanning-overlay.bg-slate-950\/95 {
+  background-color: rgba(248, 250, 252, 0.92) !important;
+}
+
+html.theme-light #modal-settings.bg-slate-950\/70,
+html.theme-light #modal-json.bg-slate-950\/70 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+html.theme-light .bg-slate-800,
+html.theme-light .bg-slate-850 {
+  background-color: #f1f5f9 !important;
+}
+
+html.theme-light .hover\:bg-slate-800:hover,
+html.theme-light .hover\:bg-slate-700:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* Queue Card Active State in White Theme */
+html.theme-light .queue-card-active {
+  background-color: #f5f3ff !important;
+  border-color: #8b5cf6 !important;
+  box-shadow: 0 4px 12px rgba(124, 58, 237, 0.12) !important;
+}
+
+/* Form Inputs, Selects & Textareas */
+html.theme-light input,
+html.theme-light select,
+html.theme-light textarea {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.theme-light input::placeholder,
+html.theme-light textarea::placeholder {
+  color: #94a3b8 !important;
+}
+
+html.theme-light input:focus,
+html.theme-light select:focus,
+html.theme-light textarea:focus {
+  border-color: #7c3aed !important;
+}
+
+/* Typography & Text Contrast */
+html.theme-light .text-white {
+  color: #0f172a !important;
+}
+
+/* Preserve white text on solid brand/accent buttons and icons */
+html.theme-light .bg-brand-600,
+html.theme-light .bg-brand-600 .text-white,
+html.theme-light .bg-brand-600 span,
+html.theme-light #btn-save-verify,
+html.theme-light #btn-save-settings,
+html.theme-light #btn-copy-json {
+  color: #ffffff !important;
+}
+
+html.theme-light .text-slate-100,
+html.theme-light .text-slate-200 {
+  color: #1e293b !important;
+}
+
+html.theme-light .text-slate-300 {
+  color: #334155 !important;
+}
+
+html.theme-light .text-slate-400 {
+  color: #475569 !important;
+}
+
+html.theme-light .text-slate-500,
+html.theme-light .text-slate-600 {
+  color: #64748b !important;
+}
+
+/* Decorative background icons on stat cards */
+html.theme-light .text-slate-800 {
+  color: #e2e8f0 !important;
+}
+
+/* High-Contrast Semantic Accent Text on White Surfaces */
+html.theme-light .text-emerald-400 {
+  color: #059669 !important;
+}
+html.theme-light .text-amber-400 {
+  color: #d97706 !important;
+}
+html.theme-light .text-sky-400 {
+  color: #0284c7 !important;
+}
+html.theme-light .text-violet-400,
+html.theme-light .text-brand-400 {
+  color: #6d28d9 !important;
+}
+html.theme-light .text-indigo-400 {
+  color: #4f46e5 !important;
+}
+html.theme-light .text-rose-400 {
+  color: #e11d48 !important;
+}
+
+/* Borders & Dividers */
+html.theme-light .border-slate-900,
+html.theme-light .border-slate-850,
+html.theme-light .border-slate-800,
+html.theme-light .border-slate-800\/80,
+html.theme-light .border-slate-800\/60,
+html.theme-light .border-slate-750,
+html.theme-light .border-slate-700,
+html.theme-light .border-slate-700\/90 {
+  border-color: #e2e8f0 !important;
+}
+
+html.theme-light .divide-slate-800\/60 > :not([hidden]) ~ :not([hidden]) {
+  border-color: #e2e8f0 !important;
+}
+
+/* Review Warning Banner in White Theme */
+html.theme-light #review-warning-box {
+  background-color: #fffbeb !important;
+  border-color: #fcd34d !important;
+}
+html.theme-light #review-warning-box h5 {
+  color: #b45309 !important;
+}
+html.theme-light #review-warning-box ul {
+  color: #92400e !important;
+}
+
+/* Softer Shadows in White Theme */
+html.theme-light .shadow-lg,
+html.theme-light .shadow-2xl,
+html.theme-light .shadow-md {
+  box-shadow: 0 2px 10px rgba(15, 23, 42, 0.06) !important;
 }
